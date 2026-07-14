@@ -1,14 +1,23 @@
-"""SQLite-backed structured store for failure records and recovery recipes.
+"""SQLite-backed structured store for failure records, recovery recipes, and
+standing guards.
 
-Two tables:
+Three tables:
 - `failures`: one row per tool-call/invariant failure occurrence.
 - `recipes`: one row per distinct failure signature that has a known fix,
   keyed by signature so a re-seen failure shape updates the same row rather
   than accumulating duplicates.
+- `guards` (Phase 2): one row per `(tool_name, argument, kind)` — a proactive
+  fix promoted from a proven recipe, applied *before* the first call attempt
+  rather than after a failure. Keyed differently from `recipes` on purpose:
+  pre-call there's no `error_type`/`error_message` yet, so guards can't be
+  looked up by full failure `signature` the way recipes are — matching is by
+  which tool/argument is involved, not by which error already happened.
 
 This module only owns raw persistence (schema + CRUD). Recipe domain logic —
 building a `Recipe` from a successful recovery, updating `times_applied` /
-`success_rate`, and pruning policy — lives in `oracle/recipes.py`.
+`success_rate`, and pruning policy — lives in `oracle/recipes.py`. Guard
+domain logic (promotion eligibility, describe() text) lives in
+`oracle/guards.py`.
 """
 
 from __future__ import annotations
@@ -61,6 +70,25 @@ CREATE TABLE IF NOT EXISTS recipes (
     created_at TEXT NOT NULL,
     last_used TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS guards (
+    tool_name TEXT NOT NULL,
+    argument TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    transform TEXT,
+    patch_value TEXT,
+    source_signature TEXT NOT NULL,
+    root_cause TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    last_applied TEXT,
+    times_applied INTEGER NOT NULL DEFAULT 0,
+    times_succeeded INTEGER NOT NULL DEFAULT 0,
+    success_rate REAL NOT NULL DEFAULT 0.0,
+    PRIMARY KEY (tool_name, argument, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_guards_tool_name ON guards(tool_name);
 """
 
 
@@ -121,6 +149,41 @@ class RecipeRow:
             success_rate=row["success_rate"],
             created_at=row["created_at"],
             last_used=row["last_used"],
+        )
+
+
+@dataclass
+class GuardRow:
+    tool_name: str
+    argument: str
+    kind: str  # "transform" | "patch"
+    source_signature: str
+    created_at: str
+    transform: str | None = None
+    patch_value: Any = None
+    root_cause: str | None = None
+    active: bool = True
+    last_applied: str | None = None
+    times_applied: int = 0
+    times_succeeded: int = 0
+    success_rate: float = 0.0
+
+    @classmethod
+    def _from_row(cls, row: sqlite3.Row) -> GuardRow:
+        return cls(
+            tool_name=row["tool_name"],
+            argument=row["argument"],
+            kind=row["kind"],
+            transform=row["transform"],
+            patch_value=json.loads(row["patch_value"]) if row["patch_value"] is not None else None,
+            source_signature=row["source_signature"],
+            root_cause=row["root_cause"],
+            active=bool(row["active"]),
+            created_at=row["created_at"],
+            last_applied=row["last_applied"],
+            times_applied=row["times_applied"],
+            times_succeeded=row["times_succeeded"],
+            success_rate=row["success_rate"],
         )
 
 
@@ -266,6 +329,79 @@ class SQLiteStore:
 
     def delete_recipe(self, signature: str) -> None:
         self._conn.execute("DELETE FROM recipes WHERE signature = ?", (signature,))
+        self._conn.commit()
+
+    # -- guards --------------------------------------------------------------
+
+    def upsert_guard(self, guard: GuardRow) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO guards (
+                tool_name, argument, kind, transform, patch_value,
+                source_signature, root_cause, active, created_at,
+                last_applied, times_applied, times_succeeded, success_rate
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tool_name, argument, kind) DO UPDATE SET
+                transform = excluded.transform,
+                patch_value = excluded.patch_value,
+                source_signature = excluded.source_signature,
+                root_cause = excluded.root_cause,
+                active = excluded.active,
+                last_applied = excluded.last_applied,
+                times_applied = excluded.times_applied,
+                times_succeeded = excluded.times_succeeded,
+                success_rate = excluded.success_rate
+            """,
+            (
+                guard.tool_name,
+                guard.argument,
+                guard.kind,
+                guard.transform,
+                json.dumps(guard.patch_value) if guard.patch_value is not None else None,
+                guard.source_signature,
+                guard.root_cause,
+                int(guard.active),
+                guard.created_at,
+                guard.last_applied,
+                guard.times_applied,
+                guard.times_succeeded,
+                guard.success_rate,
+            ),
+        )
+        self._conn.commit()
+
+    def get_guard(self, tool_name: str, argument: str, kind: str) -> GuardRow | None:
+        row = self._conn.execute(
+            "SELECT * FROM guards WHERE tool_name = ? AND argument = ? AND kind = ?",
+            (tool_name, argument, kind),
+        ).fetchone()
+        return GuardRow._from_row(row) if row else None
+
+    def list_guards(
+        self,
+        tool_name: str | None = None,
+        active_only: bool = True,
+        limit: int = 100,
+    ) -> list[GuardRow]:
+        clauses = []
+        params: list[Any] = []
+        if tool_name is not None:
+            clauses.append("tool_name = ?")
+            params.append(tool_name)
+        if active_only:
+            clauses.append("active = 1")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = self._conn.execute(
+            f"SELECT * FROM guards {where} ORDER BY tool_name, argument LIMIT ?", params
+        ).fetchall()
+        return [GuardRow._from_row(row) for row in rows]
+
+    def delete_guard(self, tool_name: str, argument: str, kind: str) -> None:
+        self._conn.execute(
+            "DELETE FROM guards WHERE tool_name = ? AND argument = ? AND kind = ?",
+            (tool_name, argument, kind),
+        )
         self._conn.commit()
 
     # -- lifecycle -----------------------------------------------------------

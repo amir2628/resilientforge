@@ -48,6 +48,9 @@ def wrap_tools(
     similarity_threshold: float = 0.85,
     workflow_id: str | None = None,
     oracle: Oracle | None = None,
+    enable_standing_guards: bool = True,
+    guard_promotion_min_occurrences: int = 3,
+    guard_promotion_min_success_rate: float = 0.8,
 ) -> dict[str, WrappedAgent]:
     """Wrap every tool in `tools` ({name: callable}), sharing ONE Oracle
     across all of them — recipes learned recovering one tool's failures
@@ -67,6 +70,9 @@ def wrap_tools(
             reflect=reflect,
             similarity_threshold=similarity_threshold,
             workflow_id=workflow_id,
+            enable_standing_guards=enable_standing_guards,
+            guard_promotion_min_occurrences=guard_promotion_min_occurrences,
+            guard_promotion_min_success_rate=guard_promotion_min_success_rate,
         )
         for name, fn in tools.items()
     }
@@ -119,17 +125,27 @@ def make_json_arg_parser(
     oracle: Oracle,
     reflect: ReflectFn | None = None,
     max_recovery_attempts: int = 2,
+    enable_standing_guards: bool = True,
+    guard_promotion_min_occurrences: int = 3,
+    guard_promotion_min_success_rate: float = 0.8,
 ) -> WrappedAgent:
     """A wrapped JSON-parsing step, shared across all tools on the shared
     `oracle` — a broken-JSON recipe generalizes across tools (it's a
     syntactic problem, not a tool-specific one), so this is deliberately
-    NOT one-per-tool the way `wrap_tools` is."""
+    NOT one-per-tool the way `wrap_tools` is. Guards promote here too, with
+    zero special-casing: `(tool_name="parse_tool_call_json",
+    argument="raw_args", transform="repair_common_json_errors")` is just
+    another guard once the same JSON-escaping mistake recurs enough times.
+    """
     return wrap(
         _parse_json_args,
         oracle=oracle,
         tool_name="parse_tool_call_json",
         reflect=reflect,
         max_recovery_attempts=max_recovery_attempts,
+        enable_standing_guards=enable_standing_guards,
+        guard_promotion_min_occurrences=guard_promotion_min_occurrences,
+        guard_promotion_min_success_rate=guard_promotion_min_success_rate,
     )
 
 

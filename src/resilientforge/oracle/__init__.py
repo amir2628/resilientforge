@@ -11,13 +11,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from resilientforge.oracle.store import FailureRecord, RecipeRow, ResolutionStatus, SQLiteStore
+from resilientforge.oracle.store import (
+    FailureRecord,
+    GuardRow,
+    RecipeRow,
+    ResolutionStatus,
+    SQLiteStore,
+)
 from resilientforge.oracle.vector_index import ChromaVectorIndex, VectorIndex, VectorMatch
 
 __all__ = [
     "Oracle",
     "FailureRecord",
     "RecipeRow",
+    "GuardRow",
     "ResolutionStatus",
     "VectorIndex",
     "ChromaVectorIndex",
@@ -113,6 +120,32 @@ class Oracle:
     def delete_recipe(self, signature: str) -> None:
         self.store.delete_recipe(signature)
         self.vector_index.delete(signature)
+
+    # -- guards (raw persistence; domain logic lives in oracle/guards.py) ----
+    #
+    # Deliberately NOT indexed into the vector store the way recipes are:
+    # guard matching is exact-key (tool_name + argument presence), never
+    # fuzzy. Indexing a guard's pseudo-signature into the same collection
+    # `find_similar_failures` queries would risk it surfacing as a spurious
+    # fuzzy match during ordinary *recipe* lookup, corrupting the primary
+    # recovery path's match quality.
+
+    def upsert_guard(self, guard: GuardRow) -> None:
+        self.store.upsert_guard(guard)
+
+    def get_guard(self, tool_name: str, argument: str, kind: str) -> GuardRow | None:
+        return self.store.get_guard(tool_name, argument, kind)
+
+    def list_guards(
+        self,
+        tool_name: str | None = None,
+        active_only: bool = True,
+        limit: int = 100,
+    ) -> list[GuardRow]:
+        return self.store.list_guards(tool_name=tool_name, active_only=active_only, limit=limit)
+
+    def delete_guard(self, tool_name: str, argument: str, kind: str) -> None:
+        self.store.delete_guard(tool_name, argument, kind)
 
     # -- lifecycle -----------------------------------------------------------
 

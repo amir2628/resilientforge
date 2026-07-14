@@ -14,14 +14,15 @@ src/resilientforge/
 │   ├── recovery.py      # Fix generation (reflection) + application + transforms
 │   └── engine.py        # wrap() — ties everything into the recovery loop
 ├── oracle/
-│   ├── store.py          # SQLite: failures + recipes tables (raw CRUD)
+│   ├── store.py          # SQLite: failures + recipes + guards tables (raw CRUD)
 │   ├── vector_index.py   # VectorIndex interface + chromadb implementation
 │   ├── recipes.py        # Recipe domain model + RecipeManager (times_applied, success_rate, prune)
+│   ├── guards.py         # Phase 2: StandingGuard + GuardManager (promotion, revoke, describe)
 │   └── __init__.py       # Oracle — the single facade over store.py + vector_index.py
 ├── integrations/
 │   ├── raw_tool_loop.py     # Anthropic tool_use + OpenAI function-calling shim
 │   └── langgraph_adapter.py # LangGraph ToolNode via wrap_tool_call
-└── cli/main.py           # list / inspect / prune / stats
+└── cli/main.py           # list / inspect / prune / stats / guards *
 ```
 
 `core/` never imports `anthropic`/`openai`/`langgraph` — the model call used
@@ -38,8 +39,11 @@ with zero network access and no API key.
 `wrap(agent, invariants=[...], reflect=...)` returns a `WrappedAgent`
 whose `.invoke(**kwargs)` runs, on every call:
 
-1. Call the tool. Catch an exception, or evaluate `invariants` against
-   the result if it didn't raise.
+0. **(Phase 2)** Check for an active standing guard matching this tool;
+   if one exists, proactively apply it to the args *before* the first
+   attempt. See "Standing guards" below.
+1. Call the tool (with whatever step 0 produced). Catch an exception, or
+   evaluate `invariants` against the result if it didn't raise.
 2. If nothing failed, return the result. Done.
 3. Otherwise, normalize a failure **signature** from `(tool_name,
    error_type, error_message, args)` via `core/signature.py`.
@@ -57,7 +61,8 @@ whose `.invoke(**kwargs)` runs, on every call:
    never assumed to have worked.
 7. On success: write the fix back as a recipe (`RecipeManager.
    record_success`), updating `times_applied`/`success_rate` if the
-   recipe already existed.
+   recipe already existed — and, **(Phase 2)**, check whether it's now
+   reliable enough to promote into a standing guard.
 8. Exhausted after `max_recovery_attempts`: raise `RecoveryExhaustedError`
    carrying every attempt tried (never a silent failure).
 
@@ -89,14 +94,91 @@ be silently wrong.
 int/float/str coercion, common-JSON-error repair) — the failure-injection
 suite, not intuition, is meant to justify expanding it.
 
+## Standing guards (Phase 2) — prevention, not just recovery
+
+Phase 1's recovery loop always fails once before fixing anything: even the
+1000th occurrence of an already-learned failure shape burns one
+guaranteed-to-fail call before the recipe kicks in on retry. A standing
+guard (`oracle/guards.py`'s `StandingGuard` + `GuardManager`) skips that
+wasted call entirely, once a recipe has proven itself — this is what
+"invariants checked continuously, not just reactively" and "prevented
+rather than merely recovered from" (the two Phase 2 goals) turn into
+concretely.
+
+**Promotion.** After a recovery succeeds (`WrappedAgent._maybe_promote_guard`),
+if the recipe's been applied at least `guard_promotion_min_occurrences`
+times (default 3) at `guard_promotion_min_success_rate` or better (default
+0.8), each part of its `Fix` gets promoted into a guard:
+`argument_patch` entries become `kind="patch"` guards, `transforms`
+entries become `kind="transform"` guards — but only for transforms in
+`GUARD_SAFE_TRANSFORMS`, a stricter allowlist than `TRANSFORM_REGISTRY`
+(see below).
+
+**Matching is structurally different from recipes, on purpose.** A guard
+is keyed by `(tool_name, argument, kind)`, not by a failure `signature`
+the way a recipe is — pre-call, before the tool has even been attempted,
+there's no `error_type`/`error_message` yet to build a signature from.
+This is also why `oracle/store.py`'s `guards` table is deliberately **not**
+indexed into the vector store the way `recipes` are: guard matching is
+exact-key, never fuzzy, and indexing a guard's pseudo-signature into the
+same collection `find_similar_failures` queries would risk it surfacing
+as a spurious match during ordinary *recipe* lookup.
+
+**Occurrence counting is dual-mode**, honoring the spec's literal
+wording ("recurs N times for a given *workflow*"): scoped to
+`workflow_id` via `Oracle.list_failures(signature=, workflow_id=)` when
+one was given to `wrap()`, otherwise the recipe's own global
+`times_applied`.
+
+**Not every transform is safe to apply proactively.** Four of
+`TRANSFORM_REGISTRY`'s five entries are idempotent-or-raise: they leave
+an already-valid value unchanged, or raise `TransformError` on input they
+can't handle — in which case `WrappedAgent._apply_standing_guards`
+treats the guard as a no-op for that call and the original args flow
+through unmodified, normal Phase 1 behavior resuming from there.
+`coerce_str` is the exception: `str(value)` unconditionally succeeds for
+*any* input, so as a proactive guard (unlike as a reactive recipe
+replay, where it's already been proven a string was needed) it would
+silently stringify an already-correct non-string value on a call that
+would otherwise have succeeded fine. `GUARD_SAFE_TRANSFORMS` in
+`core/recovery.py` excludes it explicitly, with a regression test
+(`test_coerce_str_is_excluded_from_guard_safe_transforms`) asserting
+that, so a future always-succeeding transform doesn't get added to the
+allowlist without someone re-deriving that reasoning first. Patch-kind
+guards don't need an allowlist: they only fill a *missing* key
+(`setdefault` semantics), never overwrite a caller-provided value, which
+already guarantees "never break an otherwise-fine call" by construction.
+
+**Revocation is sticky.** Once a guard is explicitly revoked (`active =
+False`, via `GuardManager.revoke()` or `resilientforge guards revoke`),
+automatic promotion refuses to silently reactivate it — an operator's
+explicit "no" takes precedence.
+
+**The "system-prompt constraint" flavor** the spec also names is exposed
+as `GuardManager.describe()` / `WrappedAgent.describe_guards()` /
+`resilientforge guards describe` — plain text a caller can splice into
+their own system prompt. It is never auto-injected: neither integration
+has any system-prompt or conversation access to begin with (see
+"Integrations" below), so this was never architecturally possible as
+anything but caller-driven.
+
+`tests/failure_injection/scenarios/recurring_date_guard.py` is the
+dedicated proof: 8 trials, the first 3 cross the promotion threshold
+reactively, the remaining 5 use dates never seen in any prior trial and
+must all be *prevented* (zero retries) — not merely recovered from — to
+prove the guard generalizes rather than replaying a cached answer. See
+the `prevention_rate` column in the failure-injection report.
+
 ## The oracle (`oracle/`)
 
 Two backends behind one `Oracle` facade:
-- **SQLite** (`store.py`): `failures` (one row per occurrence) and
-  `recipes` (one row per distinct signature that has a known fix) tables.
+- **SQLite** (`store.py`): `failures` (one row per occurrence), `recipes`
+  (one row per distinct signature that has a known fix), and `guards`
+  (Phase 2 — one row per `(tool_name, argument, kind)`, see "Standing
+  guards" above) tables.
 - **Vector index** (`vector_index.py`): embeddings of the normalized
   signature text, for the fuzzy fallback when there's no exact recipe
-  match.
+  match. Guards are deliberately never indexed here.
 
 **Deliberate deviation from the obvious default**: chromadb's *default*
 embedding function downloads an ONNX model over the network on first use,
@@ -227,3 +309,7 @@ pytest -m live                           # opt-in, real API calls (not run by de
 `tests/failure_injection/harness.py` and `tests/integration/test_engine.py`
 were added because the engine and the five failure scenarios needed their
 own shared contract/coverage before either adapter existed.
+`tests/unit/test_guards.py` (Phase 2) follows the same reasoning for
+`oracle/guards.py`; `tests/failure_injection/test_guard_prevention.py`
+is the dedicated prevention-rate proof, alongside `recurring_date_guard`
+being added to the standard six-scenario report in `test_recovery_rate.py`.

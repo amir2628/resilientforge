@@ -21,9 +21,19 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from resilientforge.core.invariants import Invariant
-from resilientforge.core.recovery import FailureContext, Fix, ReflectFn, apply_fix, generate_fix
+from resilientforge.core.recovery import (
+    GUARD_SAFE_TRANSFORMS,
+    TRANSFORM_REGISTRY,
+    FailureContext,
+    Fix,
+    ReflectFn,
+    TransformError,
+    apply_fix,
+    generate_fix,
+)
 from resilientforge.core.signature import build_signature
 from resilientforge.oracle import Oracle, ResolutionStatus
+from resilientforge.oracle.guards import GuardManager, StandingGuard
 from resilientforge.oracle.recipes import RecipeManager
 
 FixSource = Literal["recipe", "reflection"]
@@ -104,25 +114,47 @@ class WrappedAgent:
         reflect: ReflectFn | None,
         similarity_threshold: float,
         workflow_id: str | None,
+        enable_standing_guards: bool = True,
+        guard_promotion_min_occurrences: int = 3,
+        guard_promotion_min_success_rate: float = 0.8,
     ) -> None:
         self.tool_fn = tool_fn
         self.tool_name = tool_name
         self.invariants = invariants
         self.oracle = oracle
         self.recipes = RecipeManager(oracle)
+        self.guards = GuardManager(oracle)
         self.max_recovery_attempts = max_recovery_attempts
         self.reflect = reflect
         self.similarity_threshold = similarity_threshold
         self.workflow_id = workflow_id
+        self.enable_standing_guards = enable_standing_guards
+        self.guard_promotion_min_occurrences = guard_promotion_min_occurrences
+        self.guard_promotion_min_success_rate = guard_promotion_min_success_rate
 
     # -- the recovery loop -------------------------------------------------
 
     def invoke(self, **kwargs: Any) -> Any:
         current_args = dict(kwargs)
+        fired_guards: list[StandingGuard] = []
+        if self.enable_standing_guards:
+            current_args, fired_guards = self._apply_standing_guards(current_args)
+
         result, error = self._call(current_args)
         classification = self._classify_failure(result, error)  # may raise InvariantAbortError
         if classification is None:
+            if fired_guards:
+                # Prevention, not recovery: a guard changed the
+                # args before the first attempt and that attempt succeeded
+                # outright — no failure was ever recorded for this call.
+                self.guards.record_application(fired_guards, succeeded=True)
             return result
+        if fired_guards:
+            # The guard fired but wasn't sufficient on its own — record the
+            # miss, then fall through to the normal Phase 1 recovery loop
+            # below exactly as if no guard had fired (using current_args,
+            # which already reflects whatever the guard changed).
+            self.guards.record_application(fired_guards, succeeded=False)
         error_type, error_message = classification
         original_error = error
 
@@ -154,7 +186,7 @@ class WrappedAgent:
                 retry_classification = self._classify_failure(retry_result, retry_error)
 
                 if retry_classification is None:
-                    self.recipes.record_success(
+                    recipe = self.recipes.record_success(
                         signature=signature,
                         tool_name=self.tool_name,
                         fix_detail=fix.model_dump(),
@@ -167,6 +199,8 @@ class WrappedAgent:
                         fix_applied=fix.model_dump(),
                         fix_verified=True,
                     )
+                    if self.enable_standing_guards:
+                        self._maybe_promote_guard(signature, fix, recipe)
                     return retry_result
 
                 retry_error_type, retry_error_message = retry_classification
@@ -192,6 +226,87 @@ class WrappedAgent:
             original_error=original_error,
             attempts=attempts,
         ) from original_error
+
+    # -- standing guards (Phase 2: "continuous", pre-call checking) ----------
+
+    def _apply_standing_guards(
+        self, args: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[StandingGuard]]:
+        """Proactively apply any active guard for this tool BEFORE the first
+        call attempt — this is what "prevented rather than merely recovered
+        from" means: skip a guaranteed-to-fail call entirely once a pattern
+        is well-established, instead of always failing once before the
+        Phase 1 recovery loop kicks in on retry.
+
+        Guards must only ever help or be neutral, never break an otherwise-
+        fine call: patch-kind guards only fill a MISSING key (never
+        overwrite a caller-provided value); transform-kind guards that raise
+        TransformError on this call's actual value are silently skipped
+        (this call just didn't need it) rather than propagating.
+        """
+        guards = self.guards.list_active(tool_name=self.tool_name)
+        new_args = dict(args)
+        fired: list[StandingGuard] = []
+        for guard in (g for g in guards if g.kind == "patch"):
+            if guard.argument not in new_args:
+                new_args[guard.argument] = guard.patch_value
+                fired.append(guard)
+        for guard in (g for g in guards if g.kind == "transform"):
+            if guard.argument not in new_args:
+                continue
+            try:
+                new_value = TRANSFORM_REGISTRY[guard.transform](new_args[guard.argument])
+            except TransformError:
+                continue  # this call's value didn't need it — no-op
+            if new_value != new_args[guard.argument]:
+                new_args[guard.argument] = new_value
+                fired.append(guard)
+        return new_args, fired
+
+    def _maybe_promote_guard(self, signature: str, fix: Fix, recipe: Any) -> None:
+        """Once a recipe has proven itself reliable, promote its fix into a
+        standing guard so future calls apply it pre-call instead of failing
+        once first. Occurrence counting is dual-mode: scoped to this
+        `workflow_id` when one was given to wrap() (using the same
+        `Oracle.list_failures` filter the oracle already supports for
+        free), otherwise the recipe's own global `times_applied`.
+        """
+        if self.workflow_id is not None:
+            occurrences = len(self.oracle.list_failures(signature=signature, workflow_id=self.workflow_id))
+        else:
+            occurrences = recipe.times_applied
+        if occurrences < self.guard_promotion_min_occurrences:
+            return
+        if recipe.success_rate < self.guard_promotion_min_success_rate:
+            return
+
+        for arg, value in fix.argument_patch.items():
+            self.guards.promote(
+                tool_name=self.tool_name,
+                argument=arg,
+                kind="patch",
+                patch_value=value,
+                source_signature=signature,
+                root_cause=fix.root_cause,
+            )
+        for arg_transform in fix.transforms:
+            if arg_transform.transform not in GUARD_SAFE_TRANSFORMS:
+                continue
+            self.guards.promote(
+                tool_name=self.tool_name,
+                argument=arg_transform.argument,
+                kind="transform",
+                transform=arg_transform.transform,
+                source_signature=signature,
+                root_cause=fix.root_cause,
+            )
+
+    def describe_guards(self) -> str:
+        """Human/LLM-readable text describing this tool's active guards —
+        splice into YOUR OWN system prompt if you want the model to see
+        them. Never auto-injected anywhere in this codebase (neither
+        adapter has system-prompt access to begin with)."""
+        return self.guards.describe(tool_name=self.tool_name)
 
     # -- helpers -------------------------------------------------------------
 
@@ -299,6 +414,9 @@ def wrap(
     similarity_threshold: float = 0.85,
     workflow_id: str | None = None,
     oracle: Oracle | None = None,
+    enable_standing_guards: bool = True,
+    guard_promotion_min_occurrences: int = 3,
+    guard_promotion_min_success_rate: float = 0.8,
 ) -> WrappedAgent:
     tool_fn = _resolve_callable(agent)
     resolved_oracle = oracle or Oracle(oracle_path)
@@ -311,4 +429,7 @@ def wrap(
         reflect=reflect,
         similarity_threshold=similarity_threshold,
         workflow_id=workflow_id,
+        enable_standing_guards=enable_standing_guards,
+        guard_promotion_min_occurrences=guard_promotion_min_occurrences,
+        guard_promotion_min_success_rate=guard_promotion_min_success_rate,
     )

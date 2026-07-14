@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from resilientforge.core.recovery import (
+    GUARD_SAFE_TRANSFORMS,
     TRANSFORM_REGISTRY,
     ArgTransform,
     FailureContext,
@@ -120,6 +121,26 @@ def test_transform_registry_contains_expected_names():
         "coerce_str",
         "repair_common_json_errors",
     }
+
+
+def test_coerce_str_is_excluded_from_guard_safe_transforms():
+    # coerce_str = str(value) unconditionally succeeds for any input, so
+    # unlike the other four transforms it can't be applied *proactively*
+    # (before a call is even attempted) without risking mangling an
+    # already-correct non-string value on a call that would otherwise have
+    # succeeded fine. Safe only as a reactive fast-path replay, where it's
+    # already been proven a string was needed. See core/recovery.py's
+    # GUARD_SAFE_TRANSFORMS docstring for the full reasoning — this test
+    # exists so a future always-succeeding transform doesn't get added to
+    # the allowlist without someone re-deriving that reasoning first.
+    assert "coerce_str" not in GUARD_SAFE_TRANSFORMS
+    assert GUARD_SAFE_TRANSFORMS == {
+        "parse_relative_date_to_iso",
+        "coerce_int",
+        "coerce_float",
+        "repair_common_json_errors",
+    }
+    assert GUARD_SAFE_TRANSFORMS < set(TRANSFORM_REGISTRY)
 
 
 # -- apply_fix -----------------------------------------------------------------

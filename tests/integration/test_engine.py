@@ -14,8 +14,9 @@ import re
 import pytest
 from pydantic import BaseModel
 
-from resilientforge import Invariant, InvariantAbortError, RecoveryExhaustedError, wrap
+from resilientforge import GuardManager, Invariant, InvariantAbortError, RecoveryExhaustedError, wrap
 from resilientforge.core.recovery import FailureContext, parse_relative_date_to_iso
+from resilientforge.oracle import Oracle
 
 # -- example "tools" used across tests ---------------------------------------
 
@@ -345,3 +346,159 @@ def test_wrapped_agent_context_manager_closes_cleanly(tmp_path):
     with wrap(flaky_create_event, oracle_path=tmp_path / "oracle") as wrapped:
         wrapped.invoke(date="2026-03-05")
     # No assertion beyond "no exception" — verifies close()/__exit__ wiring.
+
+
+# -- standing guards (Phase 2) --------------------------------------------------
+
+
+def test_guard_promotes_after_min_occurrences_and_prevents_next_failure(tmp_path):
+    reflect = CountingReflect(date_fixing_reflect)
+    wrapped = wrap(
+        flaky_create_event,
+        oracle_path=tmp_path / "oracle",
+        reflect=reflect,
+        guard_promotion_min_occurrences=3,
+    )
+
+    wrapped.invoke(date="next Friday", title="A")  # oracle miss -> reflect
+    wrapped.invoke(date="next Tuesday", title="B")  # recipe fast path
+    wrapped.invoke(date="next Monday", title="C")  # recipe fast path -> 3rd success promotes a guard
+
+    assert len(reflect.calls) == 1  # only the very first occurrence ever needed a model call
+    guard = GuardManager(wrapped.oracle).get("flaky_create_event", "date", "transform")
+    assert guard is not None
+    assert guard.transform == "parse_relative_date_to_iso"
+
+    # A 4th occurrence, a literal never seen before: the guard fires BEFORE
+    # the first attempt, so the call succeeds outright — no failure is even
+    # recorded for it, and reflect is still not called again.
+    result = wrapped.invoke(date="next Wednesday", title="D")
+
+    assert result["status"] == "created"
+    assert result["date"] == parse_relative_date_to_iso("next Wednesday")
+    assert len(reflect.calls) == 1
+
+
+def test_guard_transform_fires_and_prevents_failure(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    oracle = Oracle(oracle_path)
+    GuardManager(oracle).promote(
+        tool_name="flaky_create_event",
+        argument="date",
+        kind="transform",
+        transform="parse_relative_date_to_iso",
+        source_signature="sig-seed",
+    )
+    oracle.close()
+
+    reflect = CountingReflect(date_fixing_reflect)
+    wrapped = wrap(flaky_create_event, oracle_path=oracle_path, reflect=reflect)
+
+    result = wrapped.invoke(date="next Friday", title="Standup")
+
+    assert result["status"] == "created"
+    assert reflect.calls == []  # prevented outright — no recovery was ever needed
+
+
+def test_guard_is_a_noop_when_transform_cannot_handle_the_value(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    oracle = Oracle(oracle_path)
+    GuardManager(oracle).promote(
+        tool_name="flaky_create_event",
+        argument="date",
+        kind="transform",
+        transform="parse_relative_date_to_iso",
+        source_signature="sig-seed",
+    )
+    oracle.close()
+
+    # No reflect configured — if the guard corrupted args or crashed instead
+    # of being a clean no-op, this wouldn't cleanly exhaust with the
+    # ORIGINAL, unmodified value.
+    wrapped = wrap(flaky_create_event, oracle_path=oracle_path, reflect=None)
+
+    with pytest.raises(RecoveryExhaustedError) as exc_info:
+        wrapped.invoke(date="not a real date at all", title="Standup")
+
+    assert exc_info.value.call_args == {"date": "not a real date at all", "title": "Standup"}
+
+
+def test_patch_guard_fills_missing_key_but_never_overwrites_provided_value(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    oracle = Oracle(oracle_path)
+    GuardManager(oracle).promote(
+        tool_name="create_event_maybe_missing_attendees",
+        argument="attendees",
+        kind="patch",
+        patch_value=[],
+        source_signature="sig-seed",
+    )
+    oracle.close()
+
+    invariant = Invariant.from_pydantic_model("valid_event", _EventResult)
+    wrapped = wrap(
+        create_event_maybe_missing_attendees,
+        invariants=[invariant],
+        oracle_path=oracle_path,
+        reflect=None,
+        tool_name="create_event_maybe_missing_attendees",
+    )
+
+    filled = wrapped.invoke(title="Standup")
+    assert filled == {"title": "Standup", "attendees": []}
+
+    preserved = wrapped.invoke(title="Retro", attendees=["a@x.com"])
+    assert preserved == {"title": "Retro", "attendees": ["a@x.com"]}
+
+
+def test_enable_standing_guards_false_disables_precall_application(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    oracle = Oracle(oracle_path)
+    GuardManager(oracle).promote(
+        tool_name="flaky_create_event",
+        argument="date",
+        kind="transform",
+        transform="parse_relative_date_to_iso",
+        source_signature="sig-seed",
+    )
+    oracle.close()
+
+    wrapped = wrap(
+        flaky_create_event,
+        oracle_path=oracle_path,
+        reflect=None,
+        enable_standing_guards=False,
+    )
+
+    with pytest.raises(RecoveryExhaustedError):
+        wrapped.invoke(date="next Friday", title="Standup")
+
+
+def test_guard_promotion_is_scoped_per_workflow_when_workflow_id_is_set(tmp_path):
+    oracle = Oracle(tmp_path / "oracle")
+    reflect = CountingReflect(date_fixing_reflect)
+
+    wrapped_a = wrap(
+        flaky_create_event, oracle=oracle, reflect=reflect,
+        workflow_id="workflow-a", guard_promotion_min_occurrences=3,
+    )
+    wrapped_b = wrap(
+        flaky_create_event, oracle=oracle, reflect=reflect,
+        workflow_id="workflow-b", guard_promotion_min_occurrences=3,
+    )
+
+    # Interleaved: 2 occurrences for workflow-a, 1 for workflow-b — the
+    # GLOBAL recipe.times_applied reaches 3, but NEITHER workflow alone has
+    # hit the threshold yet.
+    wrapped_a.invoke(date="next Friday", title="A1")
+    wrapped_b.invoke(date="next Tuesday", title="B1")
+    wrapped_a.invoke(date="next Monday", title="A2")
+
+    guards = GuardManager(oracle)
+    assert guards.get("flaky_create_event", "date", "transform") is None
+
+    # A 3rd occurrence specifically for workflow-a crosses ITS threshold.
+    wrapped_a.invoke(date="next Wednesday", title="A3")
+
+    assert guards.get("flaky_create_event", "date", "transform") is not None
+    oracle.close()

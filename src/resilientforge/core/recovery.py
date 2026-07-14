@@ -141,6 +141,33 @@ TRANSFORM_REGISTRY: dict[str, Callable[[Any], Any]] = {
     "repair_common_json_errors": repair_common_json_errors,
 }
 
+# Phase 2 (oracle/guards.py): which transforms are safe to apply *proactively*
+# — before a call is even attempted, not just as a reactive fast-path replay
+# after a matching failure already proved the value needed fixing. Safe here
+# means idempotent-or-raises: either the transform leaves an already-valid
+# value effectively unchanged, or it raises TransformError on input it can't
+# handle (in which case the guard is a no-op for that call, see
+# core/engine.py's `_apply_standing_guards`).
+#
+# `coerce_str` is deliberately EXCLUDED: `str(value)` unconditionally
+# succeeds for any input, so as a proactive guard it would silently
+# stringify an already-correct non-string value (e.g. a dict/list argument)
+# on a call that would otherwise have succeeded fine — the one transform in
+# this registry that violates "guards should only ever help or be neutral,
+# never break an otherwise-fine call." It's still fine as a *reactive*
+# recipe replay (today's Phase 1 usage), where it only ever runs after a
+# signature-matched failure already proved a string was needed. Don't add a
+# new always-succeeding transform to this allowlist without re-checking
+# that same reasoning.
+GUARD_SAFE_TRANSFORMS: frozenset[str] = frozenset(
+    {
+        "parse_relative_date_to_iso",
+        "coerce_int",
+        "coerce_float",
+        "repair_common_json_errors",
+    }
+)
+
 
 # -- Fix / FailureContext -----------------------------------------------------
 

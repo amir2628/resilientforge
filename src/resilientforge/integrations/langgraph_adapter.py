@@ -102,6 +102,9 @@ def make_resilientforge_tool_call_wrapper(
     workflow_id: str | None = None,
     oracle: Oracle | None = None,
     on_exhausted: Literal["error_message", "raise"] = "error_message",
+    enable_standing_guards: bool = True,
+    guard_promotion_min_occurrences: int = 3,
+    guard_promotion_min_success_rate: float = 0.8,
 ) -> ToolCallWrapperFn:
     """Build a `wrap_tool_call` callable to pass into your OWN
     `ToolNode(..., wrap_tool_call=...)`. This module never constructs a
@@ -134,6 +137,9 @@ def make_resilientforge_tool_call_wrapper(
             reflect=reflect,
             similarity_threshold=similarity_threshold,
             workflow_id=workflow_id,
+            enable_standing_guards=enable_standing_guards,
+            guard_promotion_min_occurrences=guard_promotion_min_occurrences,
+            guard_promotion_min_success_rate=guard_promotion_min_success_rate,
         )
         try:
             return wrapped.invoke(**call_args)
@@ -170,6 +176,9 @@ def make_tool_node(
     oracle: Oracle | None = None,
     on_exhausted: Literal["error_message", "raise"] = "error_message",
     handle_tool_errors: Any = False,
+    enable_standing_guards: bool = True,
+    guard_promotion_min_occurrences: int = 3,
+    guard_promotion_min_success_rate: float = 0.8,
     **tool_node_kwargs: Any,
 ) -> ToolNode:
     """Convenience: build a fully configured ToolNode in one call, for
@@ -197,6 +206,9 @@ def make_tool_node(
         workflow_id=workflow_id,
         oracle=resolved_oracle,
         on_exhausted=on_exhausted,
+        enable_standing_guards=enable_standing_guards,
+        guard_promotion_min_occurrences=guard_promotion_min_occurrences,
+        guard_promotion_min_success_rate=guard_promotion_min_success_rate,
     )
     return ToolNode(
         tools,

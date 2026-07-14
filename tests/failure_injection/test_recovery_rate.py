@@ -19,6 +19,7 @@ from tests.failure_injection.scenarios import (
     malformed_json_args,
     missing_required_field,
     natural_language_date,
+    recurring_date_guard,
     transient_timeout,
     wrong_type_argument,
 )
@@ -29,6 +30,7 @@ SCENARIOS = [
     natural_language_date.SCENARIO,
     transient_timeout.SCENARIO,
     wrong_type_argument.SCENARIO,
+    recurring_date_guard.SCENARIO,
 ]
 
 REPORT_PATH = Path(__file__).parent / "reports" / "latest.md"

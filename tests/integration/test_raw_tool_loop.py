@@ -19,6 +19,7 @@ from resilientforge.integrations.raw_tool_loop import (
     wrap_tools,
 )
 from resilientforge.oracle import Oracle
+from resilientforge.oracle.guards import GuardManager
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -87,6 +88,35 @@ def test_wrap_tools_shares_one_oracle_across_tools(tmp_path):
     assert wrapped["create_event"].oracle is wrapped["send_email"].oracle
     assert wrapped["create_event"].tool_name == "create_event"
     assert wrapped["send_email"].tool_name == "send_email"
+
+
+def test_wrap_tools_threads_enable_standing_guards_end_to_end(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    oracle = Oracle(oracle_path)
+    GuardManager(oracle).promote(
+        tool_name="create_event", argument="date", kind="transform",
+        transform="parse_relative_date_to_iso", source_signature="sig-seed",
+    )
+    oracle.close()
+
+    # Disabled: the pre-seeded guard must NOT fire, so this fails outright
+    # (no reflect configured) exactly as if no guard existed.
+    disabled = wrap_tools(
+        {"create_event": create_event}, oracle_path=oracle_path, reflect=None,
+        enable_standing_guards=False,
+    )
+    result = execute_anthropic_tool_use(
+        disabled, _FakeToolUseBlock(id="tu_1", name="create_event", input={"date": "next Friday"})
+    )
+    assert result["is_error"] is True
+
+    # Enabled (the default): the same pre-seeded guard fires and prevents
+    # the failure outright.
+    enabled = wrap_tools({"create_event": create_event}, oracle_path=oracle_path, reflect=None)
+    result = execute_anthropic_tool_use(
+        enabled, _FakeToolUseBlock(id="tu_2", name="create_event", input={"date": "next Tuesday"})
+    )
+    assert "is_error" not in result
 
 
 # -- execute_anthropic_tool_use ------------------------------------------------

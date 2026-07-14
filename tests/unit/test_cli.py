@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 
 from resilientforge.cli.main import app
 from resilientforge.oracle import Oracle
+from resilientforge.oracle.guards import GuardManager
 from resilientforge.oracle.recipes import RecipeManager
 from resilientforge.oracle.store import ResolutionStatus
 
@@ -31,6 +32,17 @@ def _seed(oracle_path, tool_name="create_event", signature=None, **recipe_kwargs
         for _ in range(recipe_kwargs.get("extra_failures", 0)):
             oracle.record_failure(tool_name=tool_name, signature=signature, sanitized_args={})
     return signature
+
+
+def _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform", **kwargs):
+    with Oracle(oracle_path) as oracle:
+        GuardManager(oracle).promote(
+            tool_name=tool_name,
+            argument=argument,
+            kind=kind,
+            source_signature=kwargs.pop("source_signature", "sig-seed"),
+            **kwargs,
+        )
 
 
 # -- list ------------------------------------------------------------------
@@ -185,3 +197,195 @@ def test_stats_reports_counts_and_status_breakdown(tmp_path):
     assert "failure records: 2" in result.output
     assert "recovered" in result.output
     assert "unresolved" in result.output
+
+
+def test_stats_includes_guard_counts(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform",
+                transform="parse_relative_date_to_iso")
+    with Oracle(oracle_path) as oracle:
+        GuardManager(oracle).revoke("create_event", "date")
+
+    result = runner.invoke(app, ["stats", "-p", str(oracle_path)])
+
+    assert result.exit_code == 0
+    assert "guards:          1 (0 active)" in result.output
+
+
+# -- guards list ---------------------------------------------------------------
+
+
+def test_guards_list_on_empty_oracle(tmp_path):
+    result = runner.invoke(app, ["guards", "list", "-p", str(tmp_path / "oracle")])
+    assert result.exit_code == 0
+    assert "No guards found." in result.output
+
+
+def test_guards_list_shows_seeded_guard(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform",
+                transform="parse_relative_date_to_iso")
+
+    result = runner.invoke(app, ["guards", "list", "-p", str(oracle_path)])
+
+    assert result.exit_code == 0
+    assert "create_event" in result.output
+    assert "date" in result.output
+    assert "parse_relative_date_to_iso" in result.output
+
+
+def test_guards_list_filters_by_tool_name(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform",
+                transform="coerce_int")
+    _seed_guard(oracle_path, tool_name="send_email", argument="body", kind="transform",
+                transform="coerce_int")
+
+    result = runner.invoke(app, ["guards", "list", "-p", str(oracle_path), "--tool-name", "send_email"])
+
+    assert "send_email" in result.output
+    assert "create_event" not in result.output
+
+
+def test_guards_list_excludes_revoked_unless_all(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform",
+                transform="coerce_int")
+    with Oracle(oracle_path) as oracle:
+        GuardManager(oracle).revoke("create_event", "date")
+
+    active_only = runner.invoke(app, ["guards", "list", "-p", str(oracle_path)])
+    assert "No guards found." in active_only.output
+
+    with_all = runner.invoke(app, ["guards", "list", "-p", str(oracle_path), "--all"])
+    assert "create_event" in with_all.output
+
+
+# -- guards inspect --------------------------------------------------------------
+
+
+def test_guards_inspect_shows_full_detail(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(
+        oracle_path, tool_name="create_event", argument="date", kind="transform",
+        transform="parse_relative_date_to_iso",
+        root_cause="natural-language date string passed where ISO date expected",
+    )
+
+    result = runner.invoke(app, ["guards", "inspect", "create_event", "date", "-p", str(oracle_path)])
+
+    assert result.exit_code == 0
+    assert "tool_name:        create_event" in result.output
+    assert "transform:        parse_relative_date_to_iso" in result.output
+    assert "natural-language date string" in result.output
+
+
+def test_guards_inspect_ambiguous_shows_both_kinds(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="t", argument="x", kind="transform", transform="coerce_int")
+    _seed_guard(oracle_path, tool_name="t", argument="x", kind="patch", patch_value=1)
+
+    result = runner.invoke(app, ["guards", "inspect", "t", "x", "-p", str(oracle_path)])
+
+    assert result.exit_code == 0
+    assert "2 guards match" in result.output
+    assert "kind:             transform" in result.output
+    assert "kind:             patch" in result.output
+
+
+def test_guards_inspect_kind_disambiguates(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="t", argument="x", kind="transform", transform="coerce_int")
+    _seed_guard(oracle_path, tool_name="t", argument="x", kind="patch", patch_value=1)
+
+    result = runner.invoke(
+        app, ["guards", "inspect", "t", "x", "--kind", "patch", "-p", str(oracle_path)]
+    )
+
+    assert result.exit_code == 0
+    assert "2 guards match" not in result.output
+    assert "patch_value:      1" in result.output
+
+
+def test_guards_inspect_no_match_exits_nonzero(tmp_path):
+    result = runner.invoke(app, ["guards", "inspect", "nope", "nope", "-p", str(tmp_path / "oracle")])
+
+    assert result.exit_code == 1
+    assert "No guard found" in result.output
+
+
+# -- guards revoke ---------------------------------------------------------------
+
+
+def test_guards_revoke_deactivates_and_is_sticky(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform",
+                transform="coerce_int")
+
+    result = runner.invoke(app, ["guards", "revoke", "create_event", "date", "-p", str(oracle_path)])
+
+    assert result.exit_code == 0
+    assert "Revoked 1 guard(s)" in result.output
+    with Oracle(oracle_path) as oracle:
+        assert GuardManager(oracle).get("create_event", "date", "transform").active is False
+
+
+def test_guards_revoke_no_match_reports_without_error(tmp_path):
+    result = runner.invoke(app, ["guards", "revoke", "nope", "nope", "-p", str(tmp_path / "oracle")])
+
+    assert result.exit_code == 0
+    assert "No active guard found" in result.output
+
+
+def test_guards_revoke_specific_kind_leaves_other_active(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="t", argument="x", kind="transform", transform="coerce_int")
+    _seed_guard(oracle_path, tool_name="t", argument="x", kind="patch", patch_value=1)
+
+    result = runner.invoke(
+        app, ["guards", "revoke", "t", "x", "--kind", "transform", "-p", str(oracle_path)]
+    )
+
+    assert "Revoked 1 guard(s)" in result.output
+    with Oracle(oracle_path) as oracle:
+        manager = GuardManager(oracle)
+        assert manager.get("t", "x", "transform").active is False
+        assert manager.get("t", "x", "patch").active is True
+
+
+# -- guards describe --------------------------------------------------------------
+
+
+def test_guards_describe_empty(tmp_path):
+    result = runner.invoke(app, ["guards", "describe", "-p", str(tmp_path / "oracle")])
+    assert result.exit_code == 0
+    assert "No active guards." in result.output
+
+
+def test_guards_describe_populated(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(
+        oracle_path, tool_name="create_event", argument="date", kind="transform",
+        transform="parse_relative_date_to_iso", root_cause="natural-language date string",
+    )
+
+    result = runner.invoke(app, ["guards", "describe", "-p", str(oracle_path)])
+
+    assert result.exit_code == 0
+    assert "create_event(date)" in result.output
+    assert "natural-language date string" in result.output
+
+
+def test_guards_describe_filters_by_tool_name(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    _seed_guard(oracle_path, tool_name="create_event", argument="date", kind="transform",
+                transform="coerce_int")
+    _seed_guard(oracle_path, tool_name="send_email", argument="body", kind="transform",
+                transform="coerce_int")
+
+    result = runner.invoke(
+        app, ["guards", "describe", "-p", str(oracle_path), "--tool-name", "send_email"]
+    )
+
+    assert "send_email" in result.output
+    assert "create_event" not in result.output

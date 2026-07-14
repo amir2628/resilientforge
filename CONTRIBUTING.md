@@ -1,14 +1,15 @@
 # Contributing
 
-Phase 1 (the MVP) is implemented — [`docs/architecture.md`](docs/architecture.md)
-documents what was actually built, including a few deliberate deviations
-from the original plan (each one flagged there and in the commit that
-made it).
+Phase 1 (the MVP) and Phase 2 (standing guards + continuous checks) are
+implemented — [`docs/architecture.md`](docs/architecture.md) documents
+what was actually built, including a few deliberate deviations from the
+original plan (each one flagged there and in the commit that made it).
 
 ## Ground rules
 
-- Phase 1 is done. Do not start Phase 2 work until it's confirmed every
-  acceptance criterion still holds.
+- Each phase must be fully working, tested, and demoable before the next
+  begins — don't start Phase 3 (speculative branching) until it's
+  confirmed Phase 1 and 2 acceptance criteria still hold.
 - If a design decision turns out to be wrong once real code is written,
   stop and flag it — update `docs/architecture.md` to match reality
   rather than silently diverging.
@@ -46,14 +47,14 @@ function — some scenarios need fresh per-run state), a list of `trials`
 same, so the suite can measure whether recovery generalizes), and a mock
 `reflect`. Add the new scenario to the `SCENARIOS` list in
 `test_recovery_rate.py`. Favor scenarios backed by real observed failure
-patterns over speculative ones, matching the discipline the current five
+patterns over speculative ones, matching the discipline the current six
 follow.
 
 ## Style
 
 - Format/lint with `ruff` (`ruff check .`).
 - Type hints throughout; Pydantic models for structured data (invariants,
-  fixes, recipes).
+  fixes, recipes, guards).
 - `core/` (signature, invariants, recovery, engine) never imports
   `anthropic`/`openai`/`langgraph` — any real model call is injected as a
   callable (`ReflectFn`, `judge`), never hardcoded. Vendor-specific code

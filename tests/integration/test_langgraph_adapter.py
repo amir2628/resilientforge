@@ -31,6 +31,8 @@ from resilientforge.integrations.langgraph_adapter import (
     make_resilientforge_tool_call_wrapper,
     make_tool_node,
 )
+from resilientforge.oracle import Oracle
+from resilientforge.oracle.guards import GuardManager
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -239,3 +241,29 @@ def test_make_tool_node_builds_a_working_node(tmp_path):
     tool_message = result["messages"][-1]
     assert tool_message.status != "error"
     assert "created 'Standup'" in tool_message.content
+
+
+def test_make_tool_node_threads_enable_standing_guards_end_to_end(tmp_path):
+    oracle_path = tmp_path / "oracle"
+    oracle = Oracle(oracle_path)
+    GuardManager(oracle).promote(
+        tool_name="create_event", argument="date", kind="transform",
+        transform="parse_relative_date_to_iso", source_signature="sig-seed",
+    )
+    oracle.close()
+
+    # Disabled: the pre-seeded guard must NOT fire — fails outright with no
+    # reflect configured, exactly as if no guard existed.
+    disabled_node = make_tool_node(
+        [create_event], oracle_path=oracle_path, reflect=None, enable_standing_guards=False,
+    )
+    compiled = _build_graph(disabled_node)
+    result = _invoke_tool(compiled, "create_event", {"date": "next Friday"}, call_id="c1")
+    assert result["messages"][-1].status == "error"
+
+    # Enabled (the default): the same pre-seeded guard fires and prevents
+    # the failure outright.
+    enabled_node = make_tool_node([create_event], oracle_path=oracle_path, reflect=None)
+    compiled = _build_graph(enabled_node)
+    result = _invoke_tool(compiled, "create_event", {"date": "next Tuesday"}, call_id="c2")
+    assert result["messages"][-1].status != "error"
