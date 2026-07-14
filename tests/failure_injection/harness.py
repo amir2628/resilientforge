@@ -42,6 +42,14 @@ class FailureScenario:
     reflect: Callable[[FailureContext], dict]
     invariants: list[Invariant] = field(default_factory=list)
     guard_promotion_min_occurrences: int = 3
+    # Phase 3: num_branches > 1 means reflect() is consulted every round
+    # to fill the candidate batch, EVEN when a recipe already exists —
+    # see ambiguous_fix_candidates.py's docstring for why that means such
+    # a scenario's oracle_hit_rate_after_first won't reach 100% the way
+    # every num_branches==1 scenario's does, and that's expected, not a
+    # regression.
+    num_branches: int = 1
+    side_effect_free: bool = False
 
 
 @dataclass
@@ -54,6 +62,13 @@ class ScenarioReport:
     oracle_hit_rate_after_first: float
     guard_promoted: bool = False
     prevention_rate: float = 0.0
+    # Phase 3: average number of reflection-sourced candidates generated
+    # per successful trial (a recipe-sourced candidate, when present, is
+    # one additional real candidate not tallied here — same "count what's
+    # actually observable, don't fabricate a number" discipline as every
+    # other metric in this module). 0.0 for num_branches==1 scenarios,
+    # where there is only ever one candidate per attempt by construction.
+    avg_candidates_considered: float = 0.0
 
 
 class _CallCounter:
@@ -115,11 +130,14 @@ def run_scenario(scenario: FailureScenario, oracle_path: Path) -> ScenarioReport
         reflect=reflect_counter,
         tool_name=scenario.name,
         guard_promotion_min_occurrences=scenario.guard_promotion_min_occurrences,
+        num_branches=scenario.num_branches,
+        side_effect_free=scenario.side_effect_free,
     )
     guards = GuardManager(wrapped.oracle)
 
     successes = 0
     attempts_per_success: list[int] = []
+    candidates_per_success: list[int] = []
     fast_path_hits = 0
     guard_active_trials = 0
     prevented_trials = 0
@@ -135,6 +153,7 @@ def run_scenario(scenario: FailureScenario, oracle_path: Path) -> ScenarioReport
         successes += 1
         attempts = call_counter.count - calls_before - 1
         attempts_per_success.append(attempts)
+        candidates_per_success.append(reflect_counter.count - reflect_before)
         if index > 0 and reflect_counter.count == reflect_before:
             fast_path_hits += 1
         if guard_active_before:
@@ -157,6 +176,9 @@ def run_scenario(scenario: FailureScenario, oracle_path: Path) -> ScenarioReport
         oracle_hit_rate_after_first=(fast_path_hits / later_trials) if later_trials else 0.0,
         guard_promoted=guard_promoted,
         prevention_rate=(prevented_trials / guard_active_trials) if guard_active_trials else 0.0,
+        avg_candidates_considered=(
+            sum(candidates_per_success) / len(candidates_per_success) if candidates_per_success else 0.0
+        ),
     )
 
 
@@ -164,14 +186,14 @@ def format_report(reports: list[ScenarioReport]) -> str:
     header = (
         "| Scenario | Trials | Baseline recovery | Recovery (ResilientForge) "
         "| Avg attempts to recovery | Oracle hit rate (after 1st occurrence) "
-        "| Guard promoted | Prevention rate |"
+        "| Guard promoted | Prevention rate | Avg candidates considered |"
     )
-    separator = "|---|---|---|---|---|---|---|---|"
+    separator = "|---|---|---|---|---|---|---|---|---|"
     rows = [
         f"| {r.name} | {r.trial_count} | {r.baseline_recovery_rate:.0%} | "
         f"{r.recovery_rate:.0%} | {r.avg_attempts_to_recovery:.1f} | "
         f"{r.oracle_hit_rate_after_first:.0%} | {'yes' if r.guard_promoted else 'no'} | "
-        f"{r.prevention_rate:.0%} |"
+        f"{r.prevention_rate:.0%} | {r.avg_candidates_considered:.1f} |"
         for r in reports
     ]
     return "\n".join([header, separator, *rows])

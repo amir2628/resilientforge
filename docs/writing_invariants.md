@@ -117,6 +117,24 @@ call. If any is violated:
 - else, if any is `"recover"` — enters the recovery loop.
 - else (all violated invariants are `"warn"`) — warns and returns.
 
+## Speculative branching (Phase 3): invariants only discriminate among *executed* candidates
+
+`wrap(..., num_branches=N)` can generate several candidate fixes for one
+failure instead of one. Your `Invariant.check` still only ever runs
+against a real result — it has no way to score a candidate that was
+never actually called. That means it only genuinely discriminates
+between candidates when `side_effect_free=True` (the tool is called for
+real once per candidate, in ranked order, until one fully passes your
+invariants). With the default `side_effect_free=False`, candidates are
+ranked *without* calling the tool — by a recipe's real `success_rate` if
+one exists, generation order otherwise — and only the top-ranked
+survivor is ever actually checked against your invariants. If your
+invariant is the thing that's supposed to tell two plausible fixes
+apart, `side_effect_free=True` is the only path where that's literally
+what happens; see [`architecture.md`](architecture.md)'s "Speculative
+branching" section for the full design and why the default path can't do
+better without fabricating a confidence score.
+
 ## A complete example
 
 From `tests/failure_injection/scenarios/missing_required_field.py` — the

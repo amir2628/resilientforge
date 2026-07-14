@@ -7,6 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Phase 3 complete: speculative branching (`wrap(..., num_branches=N,
+  side_effect_free=...)`) — instead of committing to the first proposed
+  fix, generate up to `N` candidates per recovery attempt. By default
+  (`side_effect_free=False`), candidates are ranked without calling the
+  tool (a recipe's real `success_rate` if one exists, generation order
+  otherwise) and the tool is still called for real exactly once per
+  attempt — a structural guarantee, not just a tested claim, so
+  `num_branches` never risks a duplicate real-world side effect. With an
+  explicit per-tool opt-in (`side_effect_free=True`, a caller's vouch
+  that the tool has no problematic real-world effect regardless of
+  arguments — deliberately not named `idempotent`, see
+  `docs/architecture.md`), candidates are actually called for real, in
+  ranked order, until one fully passes invariants — genuine verification
+  against real results, not a guess. No new oracle schema: only the
+  eventual winning fix is ever persisted, through the same
+  `record_success`/guard-promotion path Phase 1/2 already used. New
+  `tests/integration/test_speculative_branching.py` and a dedicated
+  `ambiguous_fix_candidates` failure-injection scenario (a failure whose
+  correct fix depends on a hidden rule undiscoverable except by real
+  trial) with a new `avg_candidates_considered` report column.
 - Phase 2 complete: standing guards (`oracle/guards.py`'s `StandingGuard` +
   `GuardManager`) — once a fix has proven itself reliably enough times, it's
   promoted into a proactive guard that fixes tool-call arguments *before*

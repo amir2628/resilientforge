@@ -105,6 +105,8 @@ def make_resilientforge_tool_call_wrapper(
     enable_standing_guards: bool = True,
     guard_promotion_min_occurrences: int = 3,
     guard_promotion_min_success_rate: float = 0.8,
+    num_branches: int = 1,
+    side_effect_free: bool = False,
 ) -> ToolCallWrapperFn:
     """Build a `wrap_tool_call` callable to pass into your OWN
     `ToolNode(..., wrap_tool_call=...)`. This module never constructs a
@@ -121,6 +123,15 @@ def make_resilientforge_tool_call_wrapper(
     returns on success — typically a `ToolMessage`, not the tool's raw
     return value — so an `Invariant.check` here should look at e.g.
     `result.content`, not assume a bare dict/string.
+
+    `num_branches`/`side_effect_free` (Phase 3, see core/engine.py's
+    `wrap()` for the full docstring on `side_effect_free`) apply to every
+    tool_call this wrapper handles equally, same caveat as
+    `wrap_tools()` in `integrations/raw_tool_loop.py`. Since `execute()`
+    here goes through LangGraph's own tool machinery (not a bare Python
+    call), a real per-candidate call under `side_effect_free=True` means
+    LangGraph's `execute()` runs once per candidate too — vouch for that
+    accordingly.
     """
     resolved_oracle = oracle or Oracle(oracle_path)
 
@@ -140,6 +151,8 @@ def make_resilientforge_tool_call_wrapper(
             enable_standing_guards=enable_standing_guards,
             guard_promotion_min_occurrences=guard_promotion_min_occurrences,
             guard_promotion_min_success_rate=guard_promotion_min_success_rate,
+            num_branches=num_branches,
+            side_effect_free=side_effect_free,
         )
         try:
             return wrapped.invoke(**call_args)
@@ -179,6 +192,8 @@ def make_tool_node(
     enable_standing_guards: bool = True,
     guard_promotion_min_occurrences: int = 3,
     guard_promotion_min_success_rate: float = 0.8,
+    num_branches: int = 1,
+    side_effect_free: bool = False,
     **tool_node_kwargs: Any,
 ) -> ToolNode:
     """Convenience: build a fully configured ToolNode in one call, for
@@ -209,6 +224,8 @@ def make_tool_node(
         enable_standing_guards=enable_standing_guards,
         guard_promotion_min_occurrences=guard_promotion_min_occurrences,
         guard_promotion_min_success_rate=guard_promotion_min_success_rate,
+        num_branches=num_branches,
+        side_effect_free=side_effect_free,
     )
     return ToolNode(
         tools,

@@ -16,6 +16,7 @@ import pytest
 
 from tests.failure_injection.harness import ScenarioReport, format_report, run_scenario
 from tests.failure_injection.scenarios import (
+    ambiguous_fix_candidates,
     malformed_json_args,
     missing_required_field,
     natural_language_date,
@@ -31,6 +32,7 @@ SCENARIOS = [
     transient_timeout.SCENARIO,
     wrong_type_argument.SCENARIO,
     recurring_date_guard.SCENARIO,
+    ambiguous_fix_candidates.SCENARIO,
 ]
 
 REPORT_PATH = Path(__file__).parent / "reports" / "latest.md"
@@ -70,8 +72,18 @@ def test_oracle_hit_rate_approaches_100_percent_after_first_occurrence(
     reports: list[ScenarioReport],
 ) -> None:
     """This last number is the whole point — it should approach
-    100% after the first successful recovery of a given failure shape."""
-    for report in reports:
+    100% after the first successful recovery of a given failure shape.
+
+    Exempts num_branches>1 scenarios (currently just
+    ambiguous_fix_candidates): speculative branching deliberately
+    re-consults reflect() every round to fill its candidate batch, even
+    when a recipe already exists — see that scenario's own docstring and
+    harness.py's avg_candidates_considered. That's a documented cost of
+    considering more options, not a fast-path regression.
+    """
+    for scenario, report in zip(SCENARIOS, reports):
+        if scenario.num_branches > 1:
+            continue
         assert report.oracle_hit_rate_after_first == 1.0, (
             f"{report.name}: oracle_hit_rate_after_first="
             f"{report.oracle_hit_rate_after_first:.0%}, expected 100%"

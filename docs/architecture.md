@@ -1,6 +1,6 @@
 # Architecture
 
-This describes what's actually built (Phase 1). Where reality forced a
+This describes what's actually built (Phases 1-3). Where reality forced a
 deviation or surfaced a real trade-off during the build, it's called out
 explicitly below rather than smoothed over.
 
@@ -169,6 +169,103 @@ must all be *prevented* (zero retries) — not merely recovered from — to
 prove the guard generalizes rather than replaying a cached answer. See
 the `prevention_rate` column in the failure-injection report.
 
+## Speculative branching (Phase 3) — multiple candidates, one safety rule
+
+Phase 1/2's recovery loop always considers exactly one `Fix` per attempt.
+Phase 3 adds `num_branches` (default `1`, today's behavior byte-for-byte)
+and `side_effect_free` (default `False`) to `wrap()`/`WrappedAgent`,
+letting a caller ask for several candidate fixes to be generated and
+evaluated in one round, instead of committing to the first one proposed.
+
+**No new `Branch`/fork type, no new oracle schema.** `apply_fix(args,
+fix)` was already a pure function — it never mutates `args` or calls the
+tool — so it already *is* an in-process, diff-based fork; Phase 3 just
+generates several `Fix` objects instead of one. `oracle/recipes.py`'s
+`recipes` table is still one row per signature: only the eventual
+winning `Fix` is ever persisted, through the exact same
+`RecipeManager.record_success` → `_maybe_promote_guard` path Phase 1/2
+already used (`WrappedAgent._on_attempt_success`/`_on_attempt_failure`,
+factored out of `invoke()` specifically so all three paths — the
+original single-candidate path and both new multi-candidate paths —
+share one bookkeeping implementation and can't silently diverge).
+
+**The safety question this had to resolve first.** Considering multiple
+candidates could mean calling the real tool once per candidate — for a
+tool with real side effects (booking something, sending something), that
+risks duplicate real-world actions. `side_effect_free` is the per-tool,
+caller-vouched opt-in that controls this:
+
+- `side_effect_free=False` (the default whenever `num_branches>1`):
+  candidates are ranked *without* calling the tool — a recipe candidate
+  with `success_rate > 0.5` ranks first (a real, persisted number, never
+  fabricated), everything else keeps generation order (recipe, then
+  reflection calls in the order made) as a documented tie-break, not a
+  claimed confidence ranking. The tool is then called for real **exactly
+  once**, with the top-ranked survivor — a structural guarantee
+  (`WrappedAgent._try_best_proxy_ranked`), not just a tested claim:
+  `num_branches` can be arbitrarily large and the real-call count per
+  attempt never changes.
+- `side_effect_free=True`: an explicit vouch that `tool_fn` has no
+  problematic real-world effect regardless of which arguments it's
+  called with — closer to HTTP's "safe" methods (GET/HEAD) than
+  "idempotent" ones (PUT/DELETE), which is why the flag isn't named
+  `idempotent`: a tool can be idempotent in the classic sense
+  ("same input twice is a no-op") while still being completely unsafe to
+  call speculatively with several *different* candidate inputs (e.g.
+  `set_status`). With this opt-in, `WrappedAgent._try_all_real` calls the
+  tool for real once per candidate, in ranked order, until one **fully
+  passes invariants** — first-fully-passing wins, not "best passing":
+  invariants are boolean, so passing candidates have no finer signal to
+  rank by. This is the one path where a candidate is genuinely verified
+  against real results rather than filtered by a proxy — every
+  tried-and-failed candidate becomes its own `RecoveryAttempt`, a
+  documented behavior change: one `attempt_number` round can now produce
+  up to `num_branches` real calls, worst case `max_recovery_attempts *
+  num_branches` total for one `invoke()`.
+
+**Candidate generation reuses `previous_attempts` for a narrower,
+documented purpose.** Each `reflect()` call within a round sees every
+candidate proposed *so far this round* (not just prior rounds' real
+failures) so a real model naturally diversifies instead of proposing the
+same fix `num_branches` times over. This is scoped to *within a round*
+only: `RecoveryAttempt`'s existing meaning ("actually executed and
+failed") is preserved — a candidate that was generated but never
+actually called for real (the default path only calls the winner) never
+pollutes a *later round's* `previous_attempts`, only the executed ones
+do, exactly as Phase 1/2.
+
+**A real, honest gap, not glossed over**: the original spec's language
+("a verifier scores branches against the invariants") is only literally
+true on the `side_effect_free=True` path, because invariants evaluate a
+*result*, and there is no result for a candidate that's never been
+executed. The default (`side_effect_free=False`) path cannot do
+invariant-based scoring — it's an honest filter-plus-tie-break over data
+that already exists (a recipe's real `success_rate`), not a fabricated
+confidence number.
+
+`num_branches`/`side_effect_free` are threaded through every existing
+entry point the same way every other `wrap()` parameter already is:
+`wrap_tools()` in `integrations/raw_tool_loop.py` and
+`make_resilientforge_tool_call_wrapper`/`make_tool_node` in
+`integrations/langgraph_adapter.py` — there's no per-tool override in
+either adapter; a genuinely different vouch per tool needs a direct
+`wrap()` call instead.
+
+`tests/failure_injection/scenarios/ambiguous_fix_candidates.py` is the
+dedicated proof: a failure whose correct fix depends on a hidden rule
+that isn't derivable from the arguments alone, so neither a
+`transforms` entry (a pure function of the current value can't guess a
+hidden rule without hardcoding it) nor a plain `argument_patch` (unsafe
+here — the right value differs by occurrence) can safely cache the
+answer across occurrences. `side_effect_free=True` real verification
+recovers 100% of trials anyway, at a real, reported cost: unlike every
+other scenario, `oracle_hit_rate_after_first` does **not** reach 100%
+here, because filling a candidate batch means `reflect()` is consulted
+every round regardless of whether a recipe already exists (see the new
+`avg_candidates_considered` column in the failure-injection report,
+and `test_recovery_rate.py`'s explicit exemption of `num_branches>1`
+scenarios from the oracle-hit-rate assertion).
+
 ## The oracle (`oracle/`)
 
 Two backends behind one `Oracle` facade:
@@ -313,3 +410,10 @@ own shared contract/coverage before either adapter existed.
 `oracle/guards.py`; `tests/failure_injection/test_guard_prevention.py`
 is the dedicated prevention-rate proof, alongside `recurring_date_guard`
 being added to the standard six-scenario report in `test_recovery_rate.py`.
+`tests/integration/test_speculative_branching.py` (Phase 3) is its own
+file rather than growing the already-large `test_engine.py` — it covers
+the safety-boundary proof (never more than one real call per attempt
+when `side_effect_free=False`, regardless of `num_branches`), proxy
+ranking, real-verification rejection of a candidate that applies cleanly
+but fails a real invariant, and the misconfiguration warning; alongside
+`ambiguous_fix_candidates` being added to the seven-scenario report.

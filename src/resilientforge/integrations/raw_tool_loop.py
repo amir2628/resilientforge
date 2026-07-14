@@ -51,12 +51,20 @@ def wrap_tools(
     enable_standing_guards: bool = True,
     guard_promotion_min_occurrences: int = 3,
     guard_promotion_min_success_rate: float = 0.8,
+    num_branches: int = 1,
+    side_effect_free: bool = False,
 ) -> dict[str, WrappedAgent]:
     """Wrap every tool in `tools` ({name: callable}), sharing ONE Oracle
     across all of them — recipes learned recovering one tool's failures
     are stored in the same place a sibling tool's failures are, which
     matters since a shared failure shape (e.g. a natural-language date
     argument) can show up across unrelated tools.
+
+    `num_branches`/`side_effect_free` (Phase 3, see core/engine.py's
+    `wrap()` for the full docstring) apply the same way to every tool in
+    `tools` — there's no per-tool override here, since `side_effect_free`
+    is a real safety vouch and per-tool differences would need a
+    per-tool call to `wrap()` directly instead.
     """
     shared_oracle = oracle or Oracle(oracle_path)
     invariants = invariants or {}
@@ -73,6 +81,8 @@ def wrap_tools(
             enable_standing_guards=enable_standing_guards,
             guard_promotion_min_occurrences=guard_promotion_min_occurrences,
             guard_promotion_min_success_rate=guard_promotion_min_success_rate,
+            num_branches=num_branches,
+            side_effect_free=side_effect_free,
         )
         for name, fn in tools.items()
     }
