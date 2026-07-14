@@ -1,5 +1,5 @@
-"""Unit tests for core/recovery.py: fix generation (reflection call mocked,
-per PROJECT_SPEC.md §7.1/§7.2 — no real model call in this file) and fix
+"""Unit tests for core/recovery.py: fix generation (reflection call mocked
+— no real model call in this file) and fix
 application, including the transform registry."""
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def test_parse_relative_date_in_n_days():
 
 
 def test_parse_relative_date_next_weekday_matches_spec_example():
-    # PROJECT_SPEC.md §4.3's own example: "next Friday" and "next Tuesday"
+    # "next Friday" and "next Tuesday"
     # must both parse correctly — this is the case the whole Fix.transforms
     # design exists to support.
     ref = date(2026, 3, 4)  # Wednesday

@@ -1,4 +1,4 @@
-"""Raw tool-calling loop adapter (PROJECT_SPEC.md §4.5): the reference
+"""Raw tool-calling loop adapter: the reference
 Phase 1 integration, working directly against the Anthropic Messages API
 tool-use format, with a thin shim for OpenAI's function-calling format.
 
@@ -16,8 +16,8 @@ Two things this module adds on top of core/engine.py's `wrap()`:
 OpenAI's function-calling format hands back arguments as a raw JSON
 *string* (`tool_call.function.arguments`), not a pre-parsed dict the way
 Anthropic's `tool_use.input` arrives — this is exactly the "malformed JSON
-args" failure pattern from §1. Rather than special-case it, JSON parsing
-is itself wrapped with `resilientforge.wrap()` (`make_json_arg_parser`),
+args" failure pattern this project targets. Rather than special-case it,
+JSON parsing is itself wrapped with `resilientforge.wrap()` (`make_json_arg_parser`),
 so a broken-JSON failure recovers through the same oracle/signature/
 recipe machinery as everything else, via the `repair_common_json_errors`
 transform added to core/recovery.py's TRANSFORM_REGISTRY alongside this
@@ -214,14 +214,14 @@ def _build_reflect_prompt(context: FailureContext) -> str:
 
 
 def create_anthropic_reflect(client: Any = None, model: str = "claude-sonnet-5") -> ReflectFn:
-    """Build a `reflect` callable (PROJECT_SPEC.md §4.4 step 5) backed by a
+    """Build a `reflect` callable backed by a
     real Anthropic Messages API call, forced to invoke a synthetic
     `propose_fix` tool matching Fix's schema.
 
     `client` defaults to a real `anthropic.Anthropic()` (reads
     ANTHROPIC_API_KEY from the environment) — inject a fake/mock client in
-    tests so no network call happens outside the opt-in `live` tier
-    (§7.4). The import is local to this function so `anthropic` is only
+    tests so no network call happens outside the opt-in `live` test tier.
+    The import is local to this function so `anthropic` is only
     required if this factory is actually used.
     """
     if client is None:

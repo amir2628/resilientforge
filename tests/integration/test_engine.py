@@ -1,11 +1,10 @@
-"""Integration tests for core/engine.py's wrap() orchestration
-(PROJECT_SPEC.md §7.2): the oracle-miss reflection path and the oracle-hit
+"""Integration tests for core/engine.py's wrap() orchestration:
+the oracle-miss reflection path and the oracle-hit
 fast path, end to end through Oracle + signature.py + invariants.py +
 recovery.py. The model call is always mocked here — no real API calls.
 
-Not listed in PROJECT_SPEC.md §6's file tree (which only shows adapter-
-specific integration tests for steps 7/9), added because engine.py needs
-its own coverage before either adapter exists.
+Added because engine.py needs its own coverage before either adapter
+exists, ahead of the adapter-specific integration tests.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def flaky_create_event(date: str, title: str = "Event") -> dict:
     """Fails unless `date` is already ISO 8601 — simulating the natural-
-    language-date failure scenario from PROJECT_SPEC.md §1/§4.3."""
+    language-date failure scenario."""
     if not _ISO_DATE_RE.match(date):
         raise ValueError(f"could not parse date '{date}'")
     return {"date": date, "title": title, "status": "created"}
@@ -134,7 +133,7 @@ def test_reflection_call_receives_failure_context(tmp_path):
     assert context.previous_attempts == []
 
 
-# -- oracle-hit fast path (the headline acceptance criterion, §8) --------------
+# -- oracle-hit fast path (the headline acceptance criterion) --------------
 
 
 def test_second_occurrence_resolves_via_oracle_hit_with_zero_model_calls(tmp_path):

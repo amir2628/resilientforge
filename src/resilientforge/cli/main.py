@@ -1,9 +1,7 @@
-"""`resilientforge` CLI: inspect, list, and prune oracle contents
-(PROJECT_SPEC.md §4.1, §8's "CLI can list, inspect, and prune oracle
-contents" acceptance criterion).
+"""`resilientforge` CLI: inspect, list, and prune oracle contents.
 
 No `rich` dependency — plain column-aligned text output, consistent with
-the dependency list actually declared in §5.2.
+the project's declared dependency list.
 """
 
 from __future__ import annotations

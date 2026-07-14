@@ -82,10 +82,9 @@ is_instance_of((int, float), name="numeric")
 - **`"abort"`** — raises `InvariantAbortError` immediately. No recovery
   is attempted at all. Use this for invariants where a wrong *replayed*
   fix (the fast path, which doesn't get a fresh model judgment) would be
-  actively dangerous — `PROJECT_SPEC.md` §10 flags this explicitly:
-  *"a recipe applied without a fresh LLM call is, by definition,
-  replaying a past action without fresh judgment."* A destructive-action
-  check is the canonical example.
+  actively dangerous: *"a recipe applied without a fresh LLM call is, by
+  definition, replaying a past action without fresh judgment."* A
+  destructive-action check is the canonical example.
 - **`"warn"`** — the result is returned as-is, after a Python
   `warnings.warn`. No recovery, no exception. Use this for invariants
   you want visibility into but don't want to block on.

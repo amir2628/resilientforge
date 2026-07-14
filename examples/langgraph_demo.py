@@ -1,5 +1,5 @@
 """Demo: wrapping a LangGraph ToolNode with ResilientForge
-(PROJECT_SPEC.md §4.5's second Phase 1 integration).
+(the second Phase 1 integration).
 
 Runs with no API key needed — a hand-rolled `reflect` stands in for a real
 model call, and tool calls are driven directly (as an AIMessage would
@@ -31,7 +31,7 @@ _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 @tool
 def create_event(date: str, title: str = "Event") -> str:
     """Create a calendar event; fails unless `date` is ISO 8601 —
-    the natural-language-date failure pattern from §1/§4.3."""
+    the natural-language-date failure pattern."""
     if not _ISO_DATE_RE.match(date):
         raise ValueError(f"could not parse date '{date}'")
     return f"created {title!r} on {date}"

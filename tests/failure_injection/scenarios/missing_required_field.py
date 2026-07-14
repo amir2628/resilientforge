@@ -1,4 +1,4 @@
-"""PROJECT_SPEC.md §7.3 scenario: missing required field.
+"""Failure-injection scenario: missing required field.
 
 Unlike the other four scenarios, this one is detected by an invariant
 (schema validation), not an exception — the tool call itself doesn't

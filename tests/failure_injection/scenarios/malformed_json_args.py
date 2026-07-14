@@ -1,4 +1,4 @@
-"""PROJECT_SPEC.md §7.3 scenario: malformed JSON args.
+"""Failure-injection scenario: malformed JSON args.
 
 Mirrors the failure OpenAI-style function-calling hands back directly
 (arguments as a raw JSON string that doesn't parse — a trailing comma

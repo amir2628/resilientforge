@@ -207,7 +207,7 @@ def test_execute_openai_tool_call_recovers_malformed_json_args(tmp_path):
     wrapped = wrap_tools({"create_event": create_event}, oracle=oracle)
     reflect = CountingReflect(json_repair_reflect)
     parser = make_json_arg_parser(oracle, reflect=reflect)
-    # trailing comma — invalid JSON, exactly the §1 malformed-args pattern
+    # trailing comma — invalid JSON, exactly the malformed-args pattern
     call = _FakeOpenAIToolCall(
         id="call_1",
         function=_FakeFunction(name="create_event", arguments='{"date": "2026-03-05",}'),

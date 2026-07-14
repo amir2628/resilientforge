@@ -1,5 +1,5 @@
 """Demo: wrapping a raw Anthropic-style tool-calling loop with
-ResilientForge (PROJECT_SPEC.md §4.5's reference integration).
+ResilientForge (the reference integration).
 
 Runs with no API key needed: `reflect` here is a small hand-rolled stand-in
 for a real model call, so the demo is self-contained. For real usage, swap
@@ -32,7 +32,7 @@ _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def create_event(date: str, title: str = "Event") -> dict:
     """A real calendar tool would reject anything that isn't a proper ISO
-    date — this is the natural-language-date failure pattern from §1/§4.3."""
+    date — this is the natural-language-date failure pattern."""
     if not _ISO_DATE_RE.match(date):
         raise ValueError(f"could not parse date '{date}'")
     return {"date": date, "title": title, "status": "created"}

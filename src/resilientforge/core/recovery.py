@@ -1,22 +1,22 @@
-"""Fix generation (LLM reflection) and fix application (PROJECT_SPEC.md §4.4
-steps 5-6). Oracle lookup and the overall recovery loop live in
-`core/engine.py` (step 6 of §9); this module owns two narrower things:
+"""Fix generation (LLM reflection) and fix application. Oracle lookup and
+the overall recovery loop live in `core/engine.py`; this module owns two
+narrower things:
 
 1. `generate_fix`: given a `FailureContext`, ask an injected `reflect`
    callable to propose a `Fix`. Like `Invariant.llm_judged`'s `judge`
    param, `reflect` is caller-supplied rather than hardcoded to a vendor
-   (§5.1) — this module has no `anthropic`/`openai` import. A concrete
+   — this module has no `anthropic`/`openai` import. A concrete
    default reflector belongs in `integrations/raw_tool_loop.py`, which
    already needs Anthropic wiring for the tool-calling loop itself; that
    keeps this module vendor-neutral and lets tests mock the model call
-   entirely (§7.1/§7.2), never touching a real API.
+   entirely, never touching a real API.
 2. `apply_fix`: turn a `Fix` into corrected tool-call arguments.
 
 Why `Fix` has two kinds of correction, not one:
 A recipe learned from one occurrence of a failure shape has to stay
 correct when replayed (fast path, no LLM call) on a *different*
 occurrence of the same shape — e.g. a signature normalizes "next Friday"
-and "next Tuesday" to the same shape (§4.3's own example), but the correct
+and "next Tuesday" to the same shape, but the correct
 fixed value obviously differs between them. A fix that was just a cached
 literal replacement value would be silently wrong on replay.
 - `argument_patch`: literal value overrides. Safe to replay only when the
@@ -28,9 +28,9 @@ literal replacement value would be silently wrong on replay.
   is what lets a natural-language-date recipe stay correct across
   different literal dates.
 
-`TRANSFORM_REGISTRY` intentionally starts small (§10: this whole area
+`TRANSFORM_REGISTRY` intentionally starts small (this whole area
 needs iteration against the failure-injection suite, not front-loaded
-guessing) — expand it as failure-injection scenarios (§7.3) demand.
+guessing) — expand it as failure-injection scenarios demand.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def parse_relative_date_to_iso(value: Any, *, today: date | None = None) -> str:
     """A minimal, dependency-free relative-date parser: today/tomorrow/
     yesterday, "in N days", "next <weekday>". Deliberately narrow — this is
     a starting point to prove the transform mechanism, not a general NL
-    date parser; widen it against real failure-injection results (§10),
+    date parser; widen it against real failure-injection results,
     not speculatively.
     """
     if not isinstance(value, str):
@@ -118,14 +118,14 @@ _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 def repair_common_json_errors(value: Any) -> str:
     """Best-effort repair of common JSON-escaping mistakes (trailing
     commas, single quotes instead of double) — the malformed-JSON-args
-    failure pattern from §1, first concretely exercised by
+    failure pattern, first concretely exercised by
     integrations/raw_tool_loop.py's OpenAI shim, where function-call
     arguments arrive as a raw string that has to be re-parsed. Returns a
     (hopefully) valid JSON *string* for re-parsing, not the parsed value —
     this transform corrects the input to `json.loads`, it doesn't call it.
     Same philosophy as `parse_relative_date_to_iso`: a narrow starting
     point, not a general JSON repair library; widen against real
-    failure-injection results (§10), not speculatively.
+    failure-injection results, not speculatively.
     """
     if not isinstance(value, str):
         raise TransformError(f"expected a JSON string, got {type(value).__name__}")
@@ -166,7 +166,7 @@ class FailureContext(BaseModel):
     attempt_number: int = 1
     # Fixes already tried this run that didn't resolve the failure, so a
     # reflection call doesn't propose the same broken approach again — the
-    # "blind repetition" failure pattern this whole project targets (§1).
+    # "blind repetition" failure pattern this whole project targets.
     previous_attempts: list[Fix] = Field(default_factory=list)
     available_transforms: list[str] = Field(default_factory=lambda: sorted(TRANSFORM_REGISTRY))
 

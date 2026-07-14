@@ -1,6 +1,6 @@
 """Unit tests for failure signature normalization/templating.
 
-This is the crux of the whole project (PROJECT_SPEC.md §10): these tests
+This is the crux of the whole project: these tests
 verify that structurally identical failures produce identical signatures
 regardless of literal values, and that structurally *different* failures
 (different field names, different types, different tools) do NOT collapse
@@ -21,8 +21,8 @@ from resilientforge.core.signature import (
 
 
 def test_natural_language_date_variants_produce_identical_signature():
-    """The example straight from PROJECT_SPEC.md §4.3: 'next Friday' and
-    'next Tuesday' date-format failures must match as the same shape."""
+    """'next Friday' and 'next Tuesday' date-format failures must match
+    as the same shape."""
     sig_friday = build_signature(
         tool_name="create_event",
         error_type="ValueError",
@@ -49,7 +49,7 @@ def test_single_word_date_value_is_not_collapsed_like_multi_word_ones():
     single-word literal value" apart. The heuristic's documented default
     is to err toward NOT collapsing when ambiguous (safer: a missed oracle
     hit costs an extra model call, a wrongly-collapsed signature risks
-    replaying an unrelated fix — PROJECT_SPEC.md §10). This test exists so
+    replaying an unrelated fix). This test exists so
     that trade-off is visible and intentional, not silently rediscovered
     as "flaky" the next time trial data happens to include a single-word
     value."""

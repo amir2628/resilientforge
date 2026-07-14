@@ -1,7 +1,7 @@
 """Integration tests for integrations/langgraph_adapter.py against a real
 compiled LangGraph StateGraph (not a mock of LangGraph itself — only the
-model/reflect call is mocked, per §7.1/§7.2). Confirms composition with
-`handle_tool_errors` and `RetryPolicy`, per §7.2's explicit requirement,
+model/reflect call is mocked). Confirms composition with
+`handle_tool_errors` and `RetryPolicy`,
 using facts verified empirically against langgraph 1.2 while building this
 adapter (see the module docstring in langgraph_adapter.py):
 

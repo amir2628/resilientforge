@@ -1,4 +1,4 @@
-"""Recipe domain model and read/write/prune logic (PROJECT_SPEC.md §4.3).
+"""Recipe domain model and read/write/prune logic.
 
 `oracle/store.py` owns raw persistence of the `recipes` table (`RecipeRow`,
 bare CRUD). This module owns the domain behavior on top of it: turning a
@@ -6,16 +6,14 @@ successful recovery into a new-or-updated `Recipe`, tracking
 `times_applied`/`success_rate` correctly across repeated occurrences of the
 same failure signature, and pruning recipes that are stale or unreliable.
 
-Naming note: PROJECT_SPEC.md §4.3's illustrative recipe JSON uses the key
-`failure_signature`; this codebase uses `signature` consistently across
+Naming note: this codebase uses `signature` consistently across
 `FailureRecord`, `RecipeRow`, `Oracle`, and here, since they all key off the
-same normalized string from `core/signature.py`. Not a functional
-deviation, just one field name instead of two for the same concept.
+same normalized string from `core/signature.py`.
 
 All operations go through `Oracle`, not `SQLiteStore` directly, so the
-vector index stays in sync with the structured store (PROJECT_SPEC.md §4.3:
-the oracle is meant to look like one interface, not two backends callers
-have to keep consistent themselves).
+vector index stays in sync with the structured store — the oracle is
+meant to look like one interface, not two backends callers have to keep
+consistent themselves.
 """
 
 from __future__ import annotations

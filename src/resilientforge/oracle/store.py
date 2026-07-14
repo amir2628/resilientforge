@@ -1,6 +1,6 @@
 """SQLite-backed structured store for failure records and recovery recipes.
 
-Two tables, matching PROJECT_SPEC.md §4.3:
+Two tables:
 - `failures`: one row per tool-call/invariant failure occurrence.
 - `recipes`: one row per distinct failure signature that has a known fix,
   keyed by signature so a re-seen failure shape updates the same row rather

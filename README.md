@@ -13,9 +13,8 @@ the oracle so the next occurrence of the same failure *shape* is resolved
 without another model call, even if the specific values involved are
 different.
 
-See [`PROJECT_SPEC.md`](./PROJECT_SPEC.md) for the full design document and
-phased roadmap, and [`docs/architecture.md`](./docs/architecture.md) for how
-Phase 1 actually works under the hood.
+See [`docs/architecture.md`](./docs/architecture.md) for how Phase 1 actually
+works under the hood.
 
 ## Does it work? Real numbers, not a claim
 

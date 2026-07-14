@@ -1,19 +1,17 @@
-"""Shared harness for the failure-injection suite (PROJECT_SPEC.md §7.3):
+"""Shared harness for the failure-injection suite:
 the FailureScenario contract each scenarios/*.py file implements, the
 runner that executes baseline-vs-wrapped trials and derives the report
 metrics, and the report formatter.
 
-Not in PROJECT_SPEC.md §6's file tree, which only lists the five scenario
-files and test_recovery_rate.py — added because they need a shared
-contract/runner rather than reimplementing the same instrumentation five
-times over (same reasoning as tests/integration/test_engine.py in step 6:
-flagged here as a deliberate, small addition to the plan, not a silent
-deviation).
+Added because the five scenario files and test_recovery_rate.py need a
+shared contract/runner rather than reimplementing the same
+instrumentation five times over (same reasoning as
+tests/integration/test_engine.py).
 
-Metrics (§7.3): recovery rate, average attempts-to-recovery, and oracle
+Metrics: recovery rate, average attempts-to-recovery, and oracle
 hit rate after the first occurrence of each scenario's failure shape —
-"this last number is the whole point — it should approach 100% after the
-first successful recovery of a given failure shape."
+this last number is the whole point — it should approach 100% after the
+first successful recovery of a given failure shape.
 """
 
 from __future__ import annotations

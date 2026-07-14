@@ -1,12 +1,12 @@
-"""PROJECT_SPEC.md §7.3 scenario: transient timeout.
+"""Failure-injection scenario: transient timeout.
 
 Distinct from the other four: no argument is ever wrong, the operation
 just needs to be retried — so the fix is an empty patch/no transforms
 (Fix already supports this: apply_fix on an all-defaults Fix returns args
 unchanged). This exercises the "not a retry/fallback mechanism"
-distinction from §2.2 in the narrowest way possible: the value ResilientForge
+distinction in the narrowest way possible: the value ResilientForge
 adds here isn't retry-with-no-change itself (frameworks already do that
-in-run per §1), it's that the SAME learned recipe generalizes instantly to
+in-run), it's that the SAME learned recipe generalizes instantly to
 a brand new query on the very next occurrence, with zero model calls.
 
 Each distinct `query` fails exactly once, then succeeds — keyed per-query

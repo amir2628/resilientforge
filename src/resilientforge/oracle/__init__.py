@@ -2,8 +2,7 @@
 semantic (vector) storage of past failures and their fixes.
 
 Callers (recovery.py, engine.py) should only need `Oracle` — they should
-not need to know that persistence is split across two backends
-(PROJECT_SPEC.md §4.3).
+not need to know that persistence is split across two backends.
 """
 
 from __future__ import annotations

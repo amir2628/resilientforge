@@ -1,14 +1,13 @@
 """The wrap() orchestration: tying the oracle (oracle/), signature
 normalization (core/signature.py), invariants (core/invariants.py), and fix
-generation/application (core/recovery.py) into the recovery flow described
-in PROJECT_SPEC.md §4.4.
+generation/application (core/recovery.py) into the recovery flow.
 
-Scope note on "zero configuration" (§4.1): that promise covers passive
+Scope note on "zero configuration": that promise covers passive
 fast-path recovery from recipes already in the oracle. Active,
 reflection-based fix generation needs a `reflect` callable — this module
 has no default implementation (mirrors core/recovery.py staying
 vendor-neutral); a real Anthropic-backed default belongs in
-integrations/raw_tool_loop.py (step 7), which already needs Anthropic
+integrations/raw_tool_loop.py, which already needs Anthropic
 wiring for the tool-calling loop itself. Without `reflect`, wrap() still
 recovers from anything a prior run already learned, but a genuinely novel
 failure shape exhausts immediately instead of attempting reflection.

@@ -1,10 +1,10 @@
-"""PROJECT_SPEC.md §7.3: the failure-injection suite — the project's core
-proof, not an afterthought. Required before merging engine changes (§7.5):
+"""The failure-injection suite — the project's core
+proof, not an afterthought. Required before merging engine changes:
 
     pytest tests/failure_injection
 
 Writes a stable-format report to tests/failure_injection/reports/latest.md
-(gitignored — regenerated on every run) so step 11's README quickstart can
+(gitignored — regenerated on every run) so the README quickstart can
 pull real, current numbers rather than hand-written claims.
 """
 
@@ -46,8 +46,8 @@ def reports(tmp_path_factory: pytest.TempPathFactory) -> list[ScenarioReport]:
 
 
 def test_baseline_fails_without_resilientforge(reports: list[ScenarioReport]) -> None:
-    """The "before" half of the proof (§8: "measurable recovery-rate
-    improvement over an unwrapped baseline"): every trial here is a
+    """The "before" half of the proof (measurable recovery-rate
+    improvement over an unwrapped baseline): every trial here is a
     deliberately malformed call, so with no recovery mechanism at all,
     none of them should succeed."""
     for report in reports:
@@ -67,7 +67,7 @@ def test_recovery_rate_with_resilientforge(reports: list[ScenarioReport]) -> Non
 def test_oracle_hit_rate_approaches_100_percent_after_first_occurrence(
     reports: list[ScenarioReport],
 ) -> None:
-    """§7.3: this last number is the whole point — it should approach
+    """This last number is the whole point — it should approach
     100% after the first successful recovery of a given failure shape."""
     for report in reports:
         assert report.oracle_hit_rate_after_first == 1.0, (

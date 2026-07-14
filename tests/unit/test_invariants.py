@@ -1,4 +1,4 @@
-"""Unit tests for the Invariant interface (PROJECT_SPEC.md §4.2)."""
+"""Unit tests for the Invariant interface."""
 
 from __future__ import annotations
 

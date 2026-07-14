@@ -1,4 +1,4 @@
-"""LangGraph adapter (PROJECT_SPEC.md §4.5): composes with LangGraph's own
+"""LangGraph adapter: composes with LangGraph's own
 `handle_tool_errors` and `RetryPolicy` rather than replacing them, via the
 `wrap_tool_call` extension point `ToolNode` exposes (LangGraph 1.x).
 
@@ -34,8 +34,8 @@ the abort/raise guarantees documented below. If you build your own
 must set `handle_tool_errors=False` yourself to get the same guarantees.
 
 How `RetryPolicy` composes: `RetryPolicy` is a *node*-level, blind retry
-(no context, no argument correction — the "in-run retry" §1 says
-frameworks already do well) set via
+(no context, no argument correction — the "in-run retry" this project's
+motivating failure patterns note frameworks already do well) set via
 `graph.add_node(name, node, retry_policy=RetryPolicy(...))`. Once
 ResilientForge's own recovery is exhausted (`RecoveryExhaustedError`),
 `on_exhausted` decides what happens next: `"error_message"` (default)

@@ -1,20 +1,20 @@
 """Semantic similarity index over normalized failure signatures.
 
-`VectorIndex` is an abstract interface (PROJECT_SPEC.md §5.1: "keep the
-storage layer behind an interface so it can be swapped later") so the
-backend can change without touching callers. `ChromaVectorIndex` is the
-Phase 1 implementation, using chromadb in local/persistent mode — no
-external service required (PROJECT_SPEC.md §4.3).
+`VectorIndex` is an abstract interface — "keep the storage layer behind
+an interface so it can be swapped later" — so the backend can change
+without touching callers. `ChromaVectorIndex` is the Phase 1
+implementation, using chromadb in local/persistent mode — no external
+service required.
 
 Embedding function note: chromadb's *default* embedding function downloads
 an onnx model from the network on first use. That breaks the "fast, no
-network" unit-test tier (PROJECT_SPEC.md §7.1) and offline installs, so
+network" unit-test tier and offline installs, so
 `ChromaVectorIndex` defaults to `_HashingEmbeddingFunction`, a deterministic,
 offline bag-of-words embedder — good enough for matching near-identical
 normalized signatures, but weak on true semantic similarity. This is a
 placeholder: swap in a real embedding model (local or hosted) behind this
 same interface once tuning match quality against the failure-injection
-suite (PROJECT_SPEC.md §10) calls for it.
+suite calls for it.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""PROJECT_SPEC.md §7.3 scenario: wrong argument type — a numeric-only
+"""Failure-injection scenario: wrong argument type — a numeric-only
 field arrives as a string (e.g. the model stringified a number). Recovered
 via the coerce_int transform, applied to each trial's own literal value.
 """

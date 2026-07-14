@@ -1,6 +1,6 @@
 """Failure signature normalization/templating.
 
-The crux of the whole project (PROJECT_SPEC.md §10): raw failure data
+The crux of the whole project: raw failure data
 (args, error messages) is full of run-specific literals — dates, ids, user
 text — that would otherwise prevent two structurally identical failures
 from producing the same signature and matching in the oracle. This module
@@ -21,9 +21,8 @@ Two independent normalization passes feed the final signature:
 
 This is intentionally simple regex/type-based matching, not semantic
 understanding of the error text. Widening or narrowing this normalization
-is expected to need real iteration against the failure-injection suite
-(§7.3) — let recovery-rate numbers be the judge of changes here, not
-intuition (§10).
+is expected to need real iteration against the failure-injection suite —
+let recovery-rate numbers be the judge of changes here, not intuition.
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ def _redact_quoted(match: re.Match[str]) -> str:
         # signatures. This is a heuristic, not a guarantee: when genuinely
         # ambiguous, erring toward NOT collapsing is the safer default,
         # since a wrongly-collapsed signature risks replaying an unrelated
-        # fix (PROJECT_SPEC.md §10).
+        # fix.
         return match.group(0)
     return "<STR>"
 

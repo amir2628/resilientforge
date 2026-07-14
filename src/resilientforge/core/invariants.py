@@ -1,13 +1,12 @@
-"""The Invariant interface (PROJECT_SPEC.md §4.2).
+"""The Invariant interface.
 
 Two supported kinds for Phase 1:
 1. Deterministic — a plain Python predicate (the base constructor), or
    Pydantic model validation (`Invariant.from_pydantic_model`).
 2. LLM-judged — a short natural-language rule evaluated by a model call
    (`Invariant.llm_judged`). The actual model call is injected as a
-   `judge` callable rather than hardcoded to one vendor (PROJECT_SPEC.md
-   §5.1), which also keeps this testable without a real API call
-   (PROJECT_SPEC.md §7.1).
+   `judge` callable rather than hardcoded to one vendor, which also
+   keeps this testable without a real API call.
 """
 
 from __future__ import annotations

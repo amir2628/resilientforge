@@ -1,10 +1,9 @@
 """Unit tests for the `resilientforge` CLI (cli/main.py): list, inspect,
-prune, stats — PROJECT_SPEC.md §8's "CLI can list, inspect, and prune
-oracle contents" acceptance criterion.
+prune, stats — the "CLI can list, inspect, and prune oracle contents"
+acceptance criterion.
 
-Not in PROJECT_SPEC.md §6's file tree, which doesn't list a CLI test file
-at all — added for the same reason as prior additions this build
-(harness.py, test_engine.py): the CLI needs its own coverage.
+Added for the same reason as prior additions this build (harness.py,
+test_engine.py): the CLI needs its own coverage.
 """
 
 from __future__ import annotations

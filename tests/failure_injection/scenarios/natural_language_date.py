@@ -1,5 +1,5 @@
-"""PROJECT_SPEC.md §7.3 scenario: natural-language date where ISO 8601 was
-expected — the exact example from §4.3 that motivates signature
+"""Failure-injection scenario: natural-language date where ISO 8601 was
+expected — the exact example that motivates signature
 normalization in the first place ("next Friday" and "next Tuesday" must
 normalize to the same failure shape). Recovered via the
 parse_relative_date_to_iso transform, which recomputes the correct ISO
