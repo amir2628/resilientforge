@@ -50,8 +50,15 @@ class MetricEvent(BaseModel):
     attempt_number: int | None = None
 
     # recovery_resolved: how one invoke() call that needed recovery
-    # ultimately ended.
-    resolution: Literal["recovered", "exhausted", "aborted"] | None = None
+    # ultimately ended. "fix_rejected_invalid_argument": every attempt
+    # proposed a fix referencing something that isn't real — an
+    # argument_patch key, a transforms[].argument, or an unregistered
+    # transforms[].transform name (see oracle/store.py's
+    # ResolutionStatus.FIX_REJECTED) — distinct from "exhausted", which
+    # implies at least one attempt was a real, live retry against the tool.
+    resolution: Literal[
+        "recovered", "exhausted", "aborted", "fix_rejected_invalid_argument"
+    ] | None = None
     total_attempts: int | None = None
 
     # guard_fired / guard_promoted / guard_revoked

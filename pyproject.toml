@@ -56,8 +56,8 @@ dev = [
 resilientforge = "resilientforge.cli.main:app"
 
 [project.urls]
-Homepage = "https://github.com/resilientforge/resilientforge"
-Issues = "https://github.com/resilientforge/resilientforge/issues"
+Homepage = "https://github.com/amir2628/resilientforge"
+Issues = "https://github.com/amir2628/resilientforge/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/resilientforge"]

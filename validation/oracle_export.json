@@ -1,0 +1,124 @@
+{
+  "failures": [
+    {
+      "id": 6,
+      "created_at": "2026-07-15T17:36:21.312167+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://search.brave.com/search?q=Brazil+vs+Germany+World+Cup+wins&source=web) > operation timed out",
+      "sanitized_args": {
+        "query": "Brazil vs Germany World Cup wins"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "retry_with_backoff",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      }
+    },
+    {
+      "id": 5,
+      "created_at": "2026-07-15T17:34:25.695865+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://yandex.com/search/site/?text=latest+updates+in+the+space+industry&web=1&searchid=2904648) > operation timed out",
+      "sanitized_args": {
+        "query": "latest updates in the space industry"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "retry_with_backoff",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      }
+    },
+    {
+      "id": 4,
+      "created_at": "2026-07-15T17:31:13.782738+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://search.yahoo.com/search;_ylt=lrapCfdfVKOPLsZyPiYXEdds;_ylu=Aso5Snpw8oFUu_mUc86y5qE0-uY_n-6f0a0elBMSWzneNmc?p=who+painted+The+Starry+Night) > operation timed out",
+      "sanitized_args": {
+        "query": "who painted The Starry Night"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "retry_with_backoff",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      }
+    },
+    {
+      "id": 3,
+      "created_at": "2026-07-15T17:24:19.638516+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://yandex.com/search/site/?text=difference+between+Python%27s+asyncio+and+threading&web=1&searchid=7508421) > operation timed out",
+      "sanitized_args": {
+        "query": "difference between Python's asyncio and threading"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "retry_with_backoff",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      }
+    },
+    {
+      "id": 2,
+      "created_at": "2026-07-15T17:20:06.690358+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://www.mojeek.com/search?q=largest+desert+in+the+world+by+area) > operation timed out",
+      "sanitized_args": {
+        "query": "largest desert in the world by area"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "retry_with_backoff",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      }
+    },
+    {
+      "id": 1,
+      "created_at": "2026-07-15T17:15:52.831555+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://www.mojeek.com/search?q=most+recent+stable+version+of+Python+release+date) > operation timed out",
+      "sanitized_args": {
+        "query": "most recent stable version of Python release date"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "increase_timeout",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "tool_name": "search",
+      "fix_detail": {
+        "strategy": "retry_with_backoff",
+        "root_cause": "Timeout during request to search engine.",
+        "argument_patch": {},
+        "transforms": []
+      },
+      "times_applied": 8,
+      "times_succeeded": 6,
+      "success_rate": 0.75,
+      "created_at": "2026-07-15T17:16:31.430999+00:00",
+      "last_used": "2026-07-15T17:36:51.283586+00:00"
+    }
+  ],
+  "guards": []
+}

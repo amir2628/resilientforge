@@ -1,0 +1,645 @@
+{
+  "failures": [
+    {
+      "id": 49,
+      "created_at": "2026-07-15T21:18:52.238537+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Emu_War'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Emu_War"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 48,
+      "created_at": "2026-07-15T21:18:32.138496+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.w3.org/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.w3.org/"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 47,
+      "created_at": "2026-07-15T21:17:34.213395+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Ship_of_Theseus'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Ship_of_Theseus"
+      },
+      "resolution_status": "fix_rejected_invalid_argument",
+      "fix_applied": null
+    },
+    {
+      "id": 46,
+      "created_at": "2026-07-15T21:17:11.614880+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://assassinscreed.fandom.com/wiki/Voynich_manuscript'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://assassinscreed.fandom.com/wiki/Voynich_manuscript"
+      },
+      "resolution_status": "fix_rejected_invalid_argument",
+      "fix_applied": null
+    },
+    {
+      "id": 45,
+      "created_at": "2026-07-15T21:16:29.090839+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Katabatic_wind'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Katabatic_wind"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 44,
+      "created_at": "2026-07-15T21:15:37.426178+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.britannica.com/topic/Antikythera-mechanism'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.britannica.com/topic/Antikythera-mechanism"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 43,
+      "created_at": "2026-07-15T21:15:25.337745+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Antikythera_mechanism'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Antikythera_mechanism"
+      },
+      "resolution_status": "fix_rejected_invalid_argument",
+      "fix_applied": null
+    },
+    {
+      "id": 42,
+      "created_at": "2026-07-15T21:14:09.449522+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Esperanto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Esperanto"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 41,
+      "created_at": "2026-07-15T21:13:41.430859+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Black_hole'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Black_hole"
+      },
+      "resolution_status": "fix_rejected_invalid_argument",
+      "fix_applied": null
+    },
+    {
+      "id": 40,
+      "created_at": "2026-07-15T21:11:54.384808+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://simple.wikipedia.org/wiki/Quantum_computing'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://simple.wikipedia.org/wiki/Quantum_computing"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 39,
+      "created_at": "2026-07-15T21:11:44.165225+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.w3.org/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.w3.org/"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 38,
+      "created_at": "2026-07-15T21:10:03.858122+00:00",
+      "signature": "tool:extract_url_content|error_type:UnicodeDecodeError|error:<STR> codec can't decode byte <NUM> in position <NUM>: invalid start byte|args:{url:<URL>}",
+      "error_type": "UnicodeDecodeError",
+      "error_message": "'utf-8' codec can't decode byte 0x8f in position 10: invalid start byte",
+      "sanitized_args": {
+        "url": "https://arxiv.org/pdf/2301.00001"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 37,
+      "created_at": "2026-07-15T21:07:46.523553+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://ja.wikipedia.org/wiki/%E9%87%8F%E5%AD%90%E3%82%B3%E3%83%B3%E3%83%94%E3%83%A5%E3%83%BC%E3%82%BF'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://ja.wikipedia.org/wiki/\u91cf\u5b50\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf"
+      },
+      "resolution_status": "fix_rejected_invalid_argument",
+      "fix_applied": null
+    },
+    {
+      "id": 36,
+      "created_at": "2026-07-15T21:07:36.724029+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://eo.wikipedia.org/wiki/Esperanto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://eo.wikipedia.org/wiki/Esperanto"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 35,
+      "created_at": "2026-07-15T21:07:27.129404+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Quantum_computing'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Quantum_computing"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 34,
+      "created_at": "2026-07-15T20:33:15.135654+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Emu_War'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Emu_War"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 33,
+      "created_at": "2026-07-15T20:32:50.155015+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.w3.org/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.w3.org/"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 32,
+      "created_at": "2026-07-15T20:30:14.285349+00:00",
+      "signature": "tool:extract_url_content|error_type:UnicodeDecodeError|error:<STR> codec can't decode byte <NUM> in position <NUM>: invalid start byte|args:{url:<URL>}",
+      "error_type": "UnicodeDecodeError",
+      "error_message": "'utf-8' codec can't decode byte 0x80 in position 10: invalid start byte",
+      "sanitized_args": {
+        "url": "https://ideavox.org/system/files/2023-03/220930+Article_Exploring+degrowth+policy+proposals.pdf"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 31,
+      "created_at": "2026-07-15T20:28:53.760894+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Ship_of_Theseus'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Ship_of_Theseus"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 30,
+      "created_at": "2026-07-15T20:28:27.173809+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Voynich_manuscript'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Voynich_manuscript"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 29,
+      "created_at": "2026-07-15T20:27:38.699658+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Katabatic_wind'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Katabatic_wind"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 28,
+      "created_at": "2026-07-15T20:27:05.340062+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikisource.org/wiki/Pride_and_Prejudice/Chapter_I'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikisource.org/wiki/Pride_and_Prejudice/Chapter_I"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 27,
+      "created_at": "2026-07-15T20:26:55.876000+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikisource.org/wiki/Pride_and_Prejudice'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikisource.org/wiki/Pride_and_Prejudice"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 26,
+      "created_at": "2026-07-15T20:26:23.608987+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Antikythera_mechanism'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Antikythera_mechanism"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 25,
+      "created_at": "2026-07-15T20:25:15.199876+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Not Acceptable' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '406 Not Acceptable' for url 'https://www.huffpost.com/entry/le-monde-in-english_b_5a238664e4b05072e8b569f3'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/406",
+      "sanitized_args": {
+        "url": "https://www.huffpost.com/entry/le-monde-in-english_b_5a238664e4b05072e8b569f3"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 24,
+      "created_at": "2026-07-15T20:24:28.743165+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://ha.wikipedia.org/wiki/Esperanto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://ha.wikipedia.org/wiki/Esperanto"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 23,
+      "created_at": "2026-07-15T20:24:21.362410+00:00",
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "error_type": "TimeoutException",
+      "error_message": "error sending request for url (https://yandex.com/search/site/?text=Esperanto+Wikipedia+page&web=1&searchid=8954981) > operation timed out",
+      "sanitized_args": {
+        "query": "Esperanto Wikipedia page"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "use_bing_as_fallback",
+        "root_cause": "Timeout during request to Yandex search API",
+        "argument_patch": {},
+        "transforms": []
+      }
+    },
+    {
+      "id": 22,
+      "created_at": "2026-07-15T20:22:14.394291+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://simple.wikipedia.org/wiki/Quantum_computing'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://simple.wikipedia.org/wiki/Quantum_computing"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 21,
+      "created_at": "2026-07-15T20:22:05.403145+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.w3.org/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.w3.org/"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 20,
+      "created_at": "2026-07-15T20:20:25.117842+00:00",
+      "signature": "tool:extract_url_content|error_type:UnicodeDecodeError|error:<STR> codec can't decode byte <NUM> in position <NUM>: invalid start byte|args:{url:<URL>}",
+      "error_type": "UnicodeDecodeError",
+      "error_message": "'utf-8' codec can't decode byte 0x8f in position 10: invalid start byte",
+      "sanitized_args": {
+        "url": "https://arxiv.org/pdf/2301.00001"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 19,
+      "created_at": "2026-07-15T20:17:10.094999+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://ja.wikipedia.org/wiki/%E9%87%8F%E5%AD%90%E3%82%B3%E3%83%B3%E3%83%94%E3%83%A5%E3%83%BC%E3%82%BF'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://ja.wikipedia.org/wiki/\u91cf\u5b50\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 18,
+      "created_at": "2026-07-15T20:16:59.764917+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://eo.wikipedia.org/wiki/Esperanto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://eo.wikipedia.org/wiki/Esperanto"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 17,
+      "created_at": "2026-07-15T20:16:50.455966+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Quantum_computing'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Quantum_computing"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 16,
+      "created_at": "2026-07-15T20:13:33.870198+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Not Found' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '404 Not Found' for url 'https://chs.nihon-u.ac.jp/wp-content/uploads/2026/03/%E3%80%90%E7%B2%BE%E5%BA%A6%E7%89%88%E3%80%91%E6%97%A5%E6%96%B0%E5%A4%A7%E5%AD%A6%E6%9E%97%E7%A7%91%E5%AD%A6%E9%99%A2-%E3%82%BF%E3%83%BC%E3%83%91%E3%83%B3%E3%83%86%E3%82%A3%E3%83%AC%E3%83%BC.pdf'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404",
+      "sanitized_args": {
+        "url": "https://chs.nihon-u.ac.jp/wp-content/uploads/2026/03/%E3%80%90%E7%B2%BE%E5%BA%A6%E7%89%88%E3%80%91%E6%97%A5%E6%96%B0%E5%A4%A7%E5%AD%A6%E6%9E%97%E7%A7%91%E5%AD%A6%E9%99%A2-%E3%82%BF%E3%83%BC%E3%83%91%E3%83%B3%E3%83%86%E3%82%A3%E3%83%AC%E3%83%BC.pdf"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 15,
+      "created_at": "2026-07-15T20:10:02.540189+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Great_Emu_War'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Great_Emu_War"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 14,
+      "created_at": "2026-07-15T20:09:45.589961+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.w3.org/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.w3.org/"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 13,
+      "created_at": "2026-07-15T20:08:14.420311+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Ship_of_Theseus'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Ship_of_Theseus"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 12,
+      "created_at": "2026-07-15T20:07:17.333247+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Voynich_manuscript'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Voynich_manuscript"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 11,
+      "created_at": "2026-07-15T20:05:31.086426+00:00",
+      "signature": "tool:extract_url_content|error_type:ConnectTimeout|error:_ssl.c:<NUM>: The handshake operation timed out|args:{url:<URL>}",
+      "error_type": "ConnectTimeout",
+      "error_message": "_ssl.c:1015: The handshake operation timed out",
+      "sanitized_args": {
+        "url": "https://de.wikipedia.org/wiki/Katabatischer_Wind"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 10,
+      "created_at": "2026-07-15T20:04:39.845555+00:00",
+      "signature": "tool:extract_url_content|error_type:ConnectTimeout|error:_ssl.c:<NUM>: The handshake operation timed out|args:{url:<URL>}",
+      "error_type": "ConnectTimeout",
+      "error_message": "_ssl.c:1015: The handshake operation timed out",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Katabatic_wind"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 9,
+      "created_at": "2026-07-15T19:55:43.455293+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Not Acceptable' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '406 Not Acceptable' for url 'https://www.huffpost.com/entry/le-monde-in-english_b_5a238664e4b05072e8b569f3'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/406",
+      "sanitized_args": {
+        "url": "https://www.huffpost.com/entry/le-monde-in-english_b_5a238664e4b05072e8b569f3"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 8,
+      "created_at": "2026-07-15T19:54:17.494464+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Esperanto_Wikipedia'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Esperanto_Wikipedia"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 7,
+      "created_at": "2026-07-15T19:52:32.650099+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://simple.wikipedia.org/wiki/Quantum_computing'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://simple.wikipedia.org/wiki/Quantum_computing"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 6,
+      "created_at": "2026-07-15T19:52:22.210513+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://www.w3.org/'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://www.w3.org/"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 5,
+      "created_at": "2026-07-15T19:50:43.789085+00:00",
+      "signature": "tool:extract_url_content|error_type:UnicodeDecodeError|error:<STR> codec can't decode byte <NUM> in position <NUM>: invalid start byte|args:{url:<URL>}",
+      "error_type": "UnicodeDecodeError",
+      "error_message": "'utf-8' codec can't decode byte 0x8f in position 10: invalid start byte",
+      "sanitized_args": {
+        "url": "https://arxiv.org/pdf/2301.00001"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 4,
+      "created_at": "2026-07-15T19:47:13.461957+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://ja.wikipedia.org/wiki/%E9%87%8F%E5%AD%90%E3%82%B3%E3%83%B3%E3%83%94%E3%83%A5%E3%83%BC%E3%82%BF'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://ja.wikipedia.org/wiki/\u91cf\u5b50\u30b3\u30f3\u30d4\u30e5\u30fc\u30bf"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 3,
+      "created_at": "2026-07-15T19:47:03.014537+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://eo.wikipedia.org/wiki/Esperanto'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://eo.wikipedia.org/wiki/Esperanto"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 2,
+      "created_at": "2026-07-15T19:46:53.590367+00:00",
+      "signature": "tool:extract_url_content|error_type:HTTPStatusError|error:Client error '<NUM> Forbidden' for url '<URL>\nFor more information check: <URL>|args:{url:<URL>}",
+      "error_type": "HTTPStatusError",
+      "error_message": "Client error '403 Forbidden' for url 'https://en.wikipedia.org/wiki/Quantum_computing'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403",
+      "sanitized_args": {
+        "url": "https://en.wikipedia.org/wiki/Quantum_computing"
+      },
+      "resolution_status": "exhausted",
+      "fix_applied": null
+    },
+    {
+      "id": 1,
+      "created_at": "2026-07-15T19:45:52.137231+00:00",
+      "signature": "tool:search|error_type:DDGSException|error:ConnectError: ConnectError(<STR>)|args:{query:<STR>}",
+      "error_type": "DDGSException",
+      "error_message": "ConnectError: ConnectError('[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1032)')",
+      "sanitized_args": {
+        "query": "history of the Library of Alexandria"
+      },
+      "resolution_status": "recovered",
+      "fix_applied": {
+        "strategy": "repair_common_json_errors",
+        "root_cause": "SSL certificate verification failed due to a self-signed certificate in the chain.",
+        "argument_patch": {},
+        "transforms": [
+          {
+            "argument": "verify_ssl",
+            "transform": "coerce_bool"
+          }
+        ]
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "signature": "tool:search|error_type:TimeoutException|error:error sending request for url (<URL> > operation timed out|args:{query:<STR>}",
+      "tool_name": "search",
+      "fix_detail": {
+        "strategy": "use_bing_as_fallback",
+        "root_cause": "Timeout during request to Yandex search API",
+        "argument_patch": {},
+        "transforms": []
+      },
+      "times_applied": 1,
+      "times_succeeded": 1,
+      "success_rate": 1.0,
+      "created_at": "2026-07-15T20:24:24.952411+00:00",
+      "last_used": "2026-07-15T20:24:24.952411+00:00"
+    },
+    {
+      "signature": "tool:search|error_type:DDGSException|error:ConnectError: ConnectError(<STR>)|args:{query:<STR>}",
+      "tool_name": "search",
+      "fix_detail": {
+        "strategy": "repair_common_json_errors",
+        "root_cause": "SSL certificate verification failed due to a self-signed certificate in the chain.",
+        "argument_patch": {},
+        "transforms": [
+          {
+            "argument": "verify_ssl",
+            "transform": "coerce_bool"
+          }
+        ]
+      },
+      "times_applied": 1,
+      "times_succeeded": 1,
+      "success_rate": 1.0,
+      "created_at": "2026-07-15T19:45:59.898386+00:00",
+      "last_used": "2026-07-15T19:45:59.898386+00:00"
+    }
+  ],
+  "guards": []
+}

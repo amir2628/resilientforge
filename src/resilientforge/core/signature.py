@@ -23,6 +23,40 @@ This is intentionally simple regex/type-based matching, not semantic
 understanding of the error text. Widening or narrowing this normalization
 is expected to need real iteration against the failure-injection suite —
 let recovery-rate numbers be the judge of changes here, not intuition.
+
+Two gaps found and fixed via a real-world validation exercise (see
+`docs/real_world_validation_round2.md`), not by inspection:
+
+1. **False-merge (over-collapsing)**: a quoted HTTP status line like
+   `'403 Forbidden'` and `'402 Payment Required'` used to both collapse to
+   the generic `<STR>` via `_redact_quoted` — the same mechanism that
+   correctly collapses "next Friday"/"next Tuesday", but here it swallowed
+   the one piece of information (the reason phrase, e.g. "Forbidden" vs.
+   "Payment Required") that determines whether a fix is even possible. The
+   fix preserves the whole quoted status line rather than collapsing it to
+   `<STR>`; the numeric code itself is still independently redacted to
+   `<NUM>` by the later decimal-number pass (same as any other number in
+   the message) — discrimination comes from the reason phrase surviving,
+   which is sufficient in practice since each standard HTTP status code has
+   a distinct, unique reason phrase. Considered a general "short,
+   structured, enum-like quoted token" rule instead of one narrowly scoped
+   to HTTP status text, but rejected it: a general pattern loose enough to
+   catch arbitrary enum-like tokens is also loose enough to accidentally
+   preserve real free text that happens to fit the same shape (e.g. a
+   quoted movie title like "500 Days of Summer" — digits followed by
+   Capitalized Words, indistinguishable from a status line by pattern
+   alone), which would under-redact content that should collapse just as
+   much as the original bug over-redacted content that shouldn't have.
+   `_HTTP_STATUS_TEXT_RE` is deliberately narrow instead: an honestly-scoped
+   fix for the concrete case found, not a speculative general rule.
+2. **Missed-match (under-collapsing)**: a hex byte literal like `0x8f` in
+   a real `UnicodeDecodeError` message only had its leading `0` matched by
+   `_NUMBER_RE` (a decimal-digit pattern) — the hex digits themselves
+   passed through unredacted, so two structurally identical failures (a
+   PDF's binary content failing UTF-8 decoding) produced different
+   signatures purely because the specific byte value differed. Fixed by
+   redacting whole hex literals (`_HEX_LITERAL_RE`) as their own pass,
+   before the decimal-number pass runs.
 """
 
 from __future__ import annotations
@@ -47,7 +81,21 @@ _QUOTED_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
 # left alone, since there's no boundary between a preceding letter and a
 # digit either.
 _NUMBER_RE = re.compile(r"-?\b\d+\.\d+|-?\b\d+")
+# Hex literals (e.g. Python's `UnicodeDecodeError: ... byte 0x8f ...`) are
+# NOT decimal digit runs — `_NUMBER_RE` only ever matches the leading "0",
+# leaving the actual hex digits (which vary per byte value, but mean
+# nothing structurally) unredacted. Must run BEFORE `_NUMBER_RE` so the
+# whole literal is consumed as one unit first.
+_HEX_LITERAL_RE = re.compile(r"\b0[xX][0-9a-fA-F]+\b")
 _BARE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Deliberately narrow (see module docstring's "false-merge" note): an HTTP
+# status line, e.g. "403 Forbidden", "402 Payment Required", "500 Internal
+# Server Error" — a 3-digit status code (1xx-5xx) followed by one or more
+# Capitalized words. Preserved rather than collapsed to <STR>, since the
+# status code is exactly the information that determines whether a fix is
+# even possible (a bot-detection 403 and a paywall 402 are different
+# problems, not the same one with a different literal).
+_HTTP_STATUS_TEXT_RE = re.compile(r"^[1-5]\d{2} [A-Z][a-zA-Z]*(?: [A-Z][a-zA-Z]*)*$")
 
 # Anchored variants for classifying a whole string value (args are typed
 # leaves, not free text, so we classify the entire value rather than
@@ -77,6 +125,10 @@ def _redact_quoted(match: re.Match[str]) -> str:
         # since a wrongly-collapsed signature risks replaying an unrelated
         # fix.
         return match.group(0)
+    if _HTTP_STATUS_TEXT_RE.match(inner):
+        # e.g. '403 Forbidden' vs '402 Payment Required' — see module
+        # docstring's "false-merge" note and _HTTP_STATUS_TEXT_RE's comment.
+        return match.group(0)
     return "<STR>"
 
 
@@ -97,6 +149,7 @@ def normalize_error_message(message: str | None) -> str:
     text = _EMAIL_RE.sub("<EMAIL>", text)
     text = _URL_RE.sub("<URL>", text)
     text = _QUOTED_RE.sub(_redact_quoted, text)
+    text = _HEX_LITERAL_RE.sub("<NUM>", text)
     text = _NUMBER_RE.sub("<NUM>", text)
     return text
 

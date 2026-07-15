@@ -39,6 +39,18 @@ class ResolutionStatus(str, Enum):
     # from EXHAUSTED, which implies recovery was attempted and ran out of
     # tries; ABORTED means recovery was deliberately never (fully) attempted.
     ABORTED = "aborted"
+    # Every recovery attempt proposed a fix referencing something that isn't
+    # real: an argument_patch key, a transforms[].argument, or a
+    # transforms[].transform name not in TRANSFORM_REGISTRY (found via a
+    # real-world validation exercise, see docs/real_world_validation_round2.md
+    # and docs/real_world_validation_round3.md — the tool-calling layer, or
+    # apply_fix's own argument-presence guard, silently drops/skips an
+    # unrecognized reference, so a "fix" like this can never have any real
+    # effect; whether the retry then happens to succeed or fail is pure
+    # chance, unrelated to the proposed fix). Distinct from EXHAUSTED, which
+    # implies at least one attempt was a real, live retry against the tool —
+    # here, none ever were.
+    FIX_REJECTED = "fix_rejected_invalid_argument"
 
 
 _SCHEMA = """

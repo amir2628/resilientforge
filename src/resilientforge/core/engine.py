@@ -15,6 +15,7 @@ failure shape exhausts immediately instead of attempting reflection.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 import warnings
@@ -50,6 +51,11 @@ class RecoveryAttempt:
     source: FixSource
     error_type: str | None = None
     error_message: str | None = None
+    # True if this attempt's Fix referenced something that isn't real (an
+    # argument_patch key, a transforms[].argument, or a transforms[].transform
+    # name) and was rejected before ever reaching a live retry — see
+    # WrappedAgent._invalid_fix_reasons.
+    rejected: bool = False
 
 
 @dataclass
@@ -109,6 +115,37 @@ def _resolve_callable(agent: Any) -> Callable[..., Any]:
     )
 
 
+def _infer_valid_arguments(tool_fn: Callable[..., Any]) -> set[str] | None:
+    """Best-effort: the real parameter names `tool_fn` accepts, used to
+    reject a Fix's `argument_patch` key that could never actually reach the
+    tool (found via a real-world validation exercise, see
+    docs/real_world_validation_round2.md — a proposed fix silently no-oped
+    instead of erroring, and got recorded as "recovered" for reasons
+    unrelated to the fix at all).
+
+    Returns `None` (meaning "unknown — don't validate") when `tool_fn`'s
+    signature can't be introspected, or only declares `**kwargs` with no
+    named parameters — a generic passthrough shim (e.g.
+    `integrations/langgraph_adapter.py`'s per-call closures) tells us
+    nothing about the REAL tool's schema; that integration passes
+    `valid_arguments` explicitly instead, derived from the actual tool's
+    schema. Erring toward `None` (no validation) rather than an empty set
+    when we can't tell is deliberate: this is a targeted fix for a
+    confirmed real gap, not a license to reject fixes we simply can't
+    verify.
+    """
+    try:
+        sig = inspect.signature(tool_fn)
+    except (TypeError, ValueError):
+        return None
+    names = {
+        name
+        for name, param in sig.parameters.items()
+        if param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return names or None
+
+
 def _default_tool_name(agent: Any, tool_fn: Callable[..., Any]) -> str:
     if agent is tool_fn:
         # `agent` was used directly as the callable (a plain function) —
@@ -147,8 +184,32 @@ class WrappedAgent:
         recipe_min_success_rate: float | None = None,
         recipe_reliability_min_occurrences: int = 3,
         metrics: MetricsHook | None = None,
+        valid_arguments: set[str] | None = None,
     ) -> None:
         """
+        valid_arguments: set[str] | None = None
+            The tool's real accepted parameter names, used (via
+            `_invalid_fix_reasons`) to reject a Fix that references one
+            that isn't real — an `argument_patch` key or a
+            `transforms[].argument` — BEFORE it's ever applied to a live
+            retry or persisted as a recipe (found via a real-world
+            validation exercise — see docs/real_world_validation_round2.md
+            and docs/real_world_validation_round3.md — where a fix
+            silently no-oped and got recorded as "recovered" for reasons
+            unrelated to the fix; round 3 found this same problem slips
+            through via `transforms` too, not just `argument_patch`).
+            Defaults to `None`, in which case it's inferred from
+            `tool_fn`'s own signature (works for a plain function/bound
+            method with named parameters); pass this explicitly when
+            `tool_fn` is a generic passthrough shim whose own signature
+            wouldn't reveal the real tool's schema (see
+            `integrations/langgraph_adapter.py`). `None` (whether given
+            explicitly or left unresolved) means "unknown — don't
+            validate," never "reject everything." A `transforms[].transform`
+            name that isn't registered in `TRANSFORM_REGISTRY` at all is
+            also rejected the same way, independent of `valid_arguments`
+            (that registry is always fully known).
+
         metrics: MetricsHook | None = None (Phase 5)
             Optional observability hook — a callable receiving a
             `MetricEvent` (see `telemetry/metrics.py`) for real tool
@@ -263,6 +324,9 @@ class WrappedAgent:
         self.recipe_min_success_rate = recipe_min_success_rate
         self.recipe_reliability_min_occurrences = recipe_reliability_min_occurrences
         self.metrics = metrics
+        self.valid_arguments = (
+            valid_arguments if valid_arguments is not None else _infer_valid_arguments(tool_fn)
+        )
         self.num_branches = num_branches
         self.side_effect_free = side_effect_free
         if side_effect_free and num_branches <= 1:
@@ -368,6 +432,11 @@ class WrappedAgent:
                     if fix is None:
                         break  # no recipe match and no `reflect` configured — nothing left to try
 
+                    invalid_reasons = self._invalid_fix_reasons(fix)
+                    if invalid_reasons:
+                        self._on_attempt_rejected(signature, fix, source, invalid_reasons, attempts)
+                        continue  # never reaches the tool, never persisted as a recipe
+
                     new_args, retry_result, retry_error = self._attempt(current_args, fix)
                     retry_classification = self._classify_failure(retry_result, retry_error)
 
@@ -425,8 +494,19 @@ class WrappedAgent:
             self._emit("recovery_resolved", resolution="aborted", total_attempts=len(attempts))
             raise
 
-        self.oracle.update_failure_resolution(failure.id, ResolutionStatus.EXHAUSTED)
-        self._emit("recovery_resolved", resolution="exhausted", total_attempts=len(attempts))
+        # Every attempt this call made was rejected before ever reaching the
+        # tool (see _on_attempt_rejected) — distinct from EXHAUSTED, which
+        # implies at least one attempt was a real, live retry. If at least
+        # one real attempt happened along the way too, EXHAUSTED is still
+        # the accurate status (mixed case: some proposals were invalid,
+        # real retries were still tried and still didn't work).
+        final_status = (
+            ResolutionStatus.FIX_REJECTED
+            if attempts and all(a.rejected for a in attempts)
+            else ResolutionStatus.EXHAUSTED
+        )
+        self.oracle.update_failure_resolution(failure.id, final_status)
+        self._emit("recovery_resolved", resolution=final_status.value, total_attempts=len(attempts))
         raise RecoveryExhaustedError(
             tool_name=self.tool_name,
             call_args=kwargs,
@@ -589,6 +669,94 @@ class WrappedAgent:
             error_type=error_type, attempt_number=len(attempts),
         )
 
+    def _invalid_fix_reasons(self, fix: Fix) -> list[str]:
+        """The ONE shared validation every live application of a `Fix`
+        goes through — `_attempt` (single-candidate path) and
+        `_add_candidate` (Phase 3 speculative branching) both call this
+        before `apply_fix`, so there's exactly one place this logic can
+        drift, not two that could disagree (found necessary the hard
+        way: round 2's real-world validation caught an invalid
+        `argument_patch` key; a fix for that alone still let the *same*
+        underlying problem — a proposed correction referencing something
+        that isn't real — slip through via `transforms` in round 3's
+        confirmation run; see docs/real_world_validation_round3.md).
+
+        Checks, all independent (a fix with ANY of these is rejected as a
+        whole — never partially applied):
+        - an `argument_patch` key that isn't a real tool parameter
+        - a `transforms[].argument` that isn't a real tool parameter
+        - a `transforms[].transform` name that isn't registered in
+          `TRANSFORM_REGISTRY` at all (previously only surfaced as a raw
+          `TransformError` from deep inside `apply_fix` — now caught here
+          instead, before ever reaching a live retry)
+
+        The two argument-name checks are skipped (never reject) when
+        `self.valid_arguments` is `None` — unknown, not "reject
+        everything." Transform-name validation always runs regardless,
+        since `TRANSFORM_REGISTRY` is always fully known, not something
+        that can be "unknown" the way a tool's real parameters can be.
+        """
+        reasons: list[str] = []
+        if self.valid_arguments is not None:
+            invalid_patch_keys = sorted(set(fix.argument_patch) - self.valid_arguments)
+            if invalid_patch_keys:
+                reasons.append(
+                    f"argument_patch key(s) not in tool's real parameters: {invalid_patch_keys}"
+                )
+            invalid_transform_args = sorted(
+                {t.argument for t in fix.transforms if t.argument not in self.valid_arguments}
+            )
+            if invalid_transform_args:
+                reasons.append(
+                    "transforms[].argument not in tool's real parameters: "
+                    f"{invalid_transform_args}"
+                )
+        unknown_transforms = sorted(
+            {t.transform for t in fix.transforms if t.transform not in TRANSFORM_REGISTRY}
+        )
+        if unknown_transforms:
+            reasons.append(f"transforms[].transform not a registered transform: {unknown_transforms}")
+        return reasons
+
+    def _on_attempt_rejected(
+        self,
+        signature: str,
+        fix: Fix,
+        source: FixSource,
+        reasons: list[str],
+        attempts: list[RecoveryAttempt],
+    ) -> None:
+        """A Fix referenced something that can't actually reach the tool
+        (see `_invalid_fix_reasons`) — reject it before it's ever applied
+        to a live retry or persisted as a recipe (see
+        docs/real_world_validation_round2.md /
+        docs/real_world_validation_round3.md: the tool-calling layer, or
+        `apply_fix`'s own argument-presence guard, previously just
+        silently dropped/skipped the invalid reference, and whatever
+        happened next — success or failure — got misattributed to this
+        fix). Recorded into `attempts` so the next reflection call sees it
+        via `previous_attempts` (the model gets a chance to learn its
+        proposal referenced something that doesn't exist), and so a
+        recipe-sourced rejection still marks `already_tried_recipe` true,
+        exactly like a real recipe failure would — this doesn't loop
+        forever retrying the same bad recipe."""
+        error_message = "; ".join(reasons)
+        attempts.append(
+            RecoveryAttempt(
+                fix=fix,
+                source=source,
+                error_type="invalid_fix_reference",
+                error_message=error_message,
+                rejected=True,
+            )
+        )
+        if source == "recipe":
+            self.recipes.record_fast_path_failure(signature)
+        self._emit(
+            "call_result", success=False, source=source,
+            error_type="invalid_fix_reference", attempt_number=len(attempts),
+        )
+
     # -- helpers -------------------------------------------------------------
 
     def _call(self, args: dict[str, Any]) -> tuple[Any, Exception | None]:
@@ -728,7 +896,19 @@ class WrappedAgent:
         """Apply `fix` and, if it applies cleanly and isn't a dupe of an
         already-collected candidate's REALIZED args, add it. Returns
         whether a candidate was added — used by `_find_fix_candidates` to
-        know when to stop asking `reflect()` for more."""
+        know when to stop asking `reflect()` for more.
+
+        Any of `_invalid_fix_reasons` (an `argument_patch` key, a
+        `transforms[].argument`, or a `transforms[].transform` name that
+        isn't real) is treated the same as any other reason a fix "doesn't
+        apply cleanly" — excluded from the candidate batch entirely, same
+        as a `TransformError` below. Unlike the single-candidate path
+        (`WrappedAgent.invoke`), this doesn't need its own distinct
+        `ResolutionStatus`/metric event: an excluded candidate here was
+        never a "the call was attempted" event to begin with, exactly like
+        an unapplicable transform already wasn't."""
+        if self._invalid_fix_reasons(fix):
+            return False
         try:
             applied_args = apply_fix(current_args, fix)
         except Exception:
@@ -884,8 +1064,14 @@ def wrap(
     recipe_min_success_rate: float | None = None,
     recipe_reliability_min_occurrences: int = 3,
     metrics: MetricsHook | None = None,
+    valid_arguments: set[str] | None = None,
 ) -> WrappedAgent:
     """
+    valid_arguments: set[str] | None = None
+        See `WrappedAgent.__init__`'s docstring. Defaults to `None`
+        (inferred from `agent`'s own signature when it's a plain callable
+        with named parameters).
+
     metrics: MetricsHook | None = None (Phase 5)
         Optional observability hook — see `WrappedAgent.__init__`'s
         docstring and `telemetry/metrics.py` for the full design.
@@ -968,4 +1154,5 @@ def wrap(
         recipe_min_success_rate=recipe_min_success_rate,
         recipe_reliability_min_occurrences=recipe_reliability_min_occurrences,
         metrics=metrics,
+        valid_arguments=valid_arguments,
     )

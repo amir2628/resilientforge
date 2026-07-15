@@ -209,6 +209,117 @@ def test_nested_dict_args_normalize_recursively_and_by_structure():
     assert sig_a != sig_c  # different key ("age" vs "nickname") is a structural difference
 
 
+# -- round 2 real-world validation regressions (docs/real_world_validation_round2.md) --
+
+
+def test_different_http_status_reason_phrase_produces_different_signature():
+    """Finding 1 (false-merge): a real 403 (bot-detection) and a real 402
+    (a paywall) are different underlying problems — no fix that could help
+    one could ever help the other — and must not collapse to one signature
+    the way they did before this fix."""
+    sig_403 = build_signature(
+        tool_name="extract_url_content",
+        error_type="HTTPStatusError",
+        error_message=(
+            "Client error '403 Forbidden' for url "
+            "'https://en.wikipedia.org/wiki/Quantum_computing'\n"
+            "For more information check: "
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+        ),
+        args={"url": "https://en.wikipedia.org/wiki/Quantum_computing"},
+    )
+    sig_402 = build_signature(
+        tool_name="extract_url_content",
+        error_type="HTTPStatusError",
+        error_message=(
+            "Client error '402 Payment Required' for url "
+            "'https://www.lemonde.fr/actualite-en-continu/'\n"
+            "For more information check: "
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/402"
+        ),
+        args={"url": "https://www.lemonde.fr/actualite-en-continu/"},
+    )
+
+    assert sig_403 != sig_402
+
+
+def test_natural_language_date_variants_still_match_after_http_status_fix():
+    """Regression guard: the false-merge fix (preserving HTTP status
+    reason phrases) must not un-collapse round 1's original case."""
+    sig_friday = build_signature(
+        tool_name="create_event",
+        error_type="ValueError",
+        error_message="could not parse date 'next Friday'",
+        args={"date": "next Friday", "title": "Standup"},
+    )
+    sig_tuesday = build_signature(
+        tool_name="create_event",
+        error_type="ValueError",
+        error_message="could not parse date 'next Tuesday'",
+        args={"date": "next Tuesday", "title": "Retro"},
+    )
+
+    assert sig_friday == sig_tuesday
+
+
+def test_hex_byte_literal_variants_produce_same_signature():
+    """Finding 2 (missed-match): two real PDFs both failing UTF-8 decoding
+    at the same position are the same underlying problem ("this is binary,
+    not text") regardless of which specific byte triggered it — must
+    produce the same signature after this fix, not one per byte value."""
+    sig_8f = build_signature(
+        tool_name="extract_url_content",
+        error_type="UnicodeDecodeError",
+        error_message="'utf-8' codec can't decode byte 0x8f in position 10: invalid start byte",
+        args={"url": "https://arxiv.org/pdf/2301.00001"},
+    )
+    sig_80 = build_signature(
+        tool_name="extract_url_content",
+        error_type="UnicodeDecodeError",
+        error_message="'utf-8' codec can't decode byte 0x80 in position 10: invalid start byte",
+        args={"url": "https://ideavox.org/system/files/2023-03/degrowth-policy-proposals.pdf"},
+    )
+
+    assert sig_8f == sig_80
+
+
+def test_decimal_numbers_still_redact_correctly_alongside_hex_literals():
+    """Regression guard: adding hex-literal redaction must not break plain
+    decimal-number redaction elsewhere in the same message."""
+    sig_a = build_signature(
+        tool_name="extract_url_content",
+        error_type="UnicodeDecodeError",
+        error_message="'utf-8' codec can't decode byte 0x8f in position 10: invalid start byte",
+        args={"url": "https://arxiv.org/pdf/2301.00001"},
+    )
+    sig_b = build_signature(
+        tool_name="extract_url_content",
+        error_type="UnicodeDecodeError",
+        error_message="'utf-8' codec can't decode byte 0x8f in position 4096: invalid start byte",
+        args={"url": "https://arxiv.org/pdf/2301.00001"},
+    )
+
+    assert sig_a == sig_b
+
+
+def test_normalize_error_message_redacts_hex_literal_as_one_unit():
+    assert (
+        normalize_error_message("can't decode byte 0x8f in position 10")
+        == "can't decode byte <NUM> in position <NUM>"
+    )
+    assert (
+        normalize_error_message("can't decode byte 0x80 in position 10")
+        == "can't decode byte <NUM> in position <NUM>"
+    )
+
+
+def test_normalize_error_message_preserves_http_status_reason_phrase():
+    assert "Forbidden" in normalize_error_message("Client error '403 Forbidden' for url 'x'")
+    assert "Payment Required" in normalize_error_message(
+        "Client error '402 Payment Required' for url 'x'"
+    )
+
+
 # -- normalize_error_message -------------------------------------------------
 
 
