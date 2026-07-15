@@ -55,6 +55,19 @@ raw Anthropic/OpenAI tool loop, which has no equivalent "halt everything"
 pathway) can meaningfully act on a propagated exception — softening it
 into a tool message the model might just shrug off would undermine why
 abort was chosen in the first place.
+
+Phase 4's `isolate` (subprocess-based timeout/crash isolation, see
+core/engine.py's `wrap()`) is deliberately **not exposed here** — a real,
+structural limitation, not an oversight. `_tool_fn_from_request` below
+builds a closure over `execute`/`request` for every tool call, and
+`execute` is LangGraph's own live callback, bound to in-process graph
+state (checkpointer, tool registry) that cannot be pickled or
+meaningfully reconstructed in a separate process — `isolate=True` would
+fail `check_picklable` on literally every call. This is unlike
+`wrap_tools()` in `integrations/raw_tool_loop.py`, where the wrapped
+`tool_fn` is the caller's own plain function, not a closure this module
+manufactures, so `isolate=True` works there exactly as it does calling
+`wrap()` directly.
 """
 
 from __future__ import annotations
@@ -132,6 +145,11 @@ def make_resilientforge_tool_call_wrapper(
     call), a real per-candidate call under `side_effect_free=True` means
     LangGraph's `execute()` runs once per candidate too — vouch for that
     accordingly.
+
+    Phase 4's `isolate`/`call_timeout`/`max_memory_mb`/`max_cpu_seconds`
+    are NOT available through this adapter — see this module's docstring
+    for why (the tool_fn built here is a closure over LangGraph's own
+    live `execute` callback, which cannot be pickled into a subprocess).
     """
     resolved_oracle = oracle or Oracle(oracle_path)
 

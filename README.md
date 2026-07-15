@@ -1,7 +1,8 @@
 # ResilientForge
 
-**Status:** Phase 1 (MVP), Phase 2 (standing guards + continuous checks), and
-Phase 3 (speculative branching) complete. Not yet published to PyPI.
+**Status:** Phase 1 (MVP), Phase 2 (standing guards + continuous checks),
+Phase 3 (speculative branching), and Phase 4 (sandboxed isolation + a local
+dashboard — oracle federation deferred) complete. Not yet published to PyPI.
 
 ResilientForge is a small, framework-agnostic Python library that sits on top of an
 agent's existing tool-calling loop and adds **persistent, cross-run failure memory**.
@@ -17,7 +18,7 @@ promoted into a **standing guard** that fixes the arguments *before* the
 tool is even called — the failure stops recurring at all, instead of
 recurring once and then being fixed on retry.
 
-See [`docs/architecture.md`](./docs/architecture.md) for how Phase 1 actually
+See [`docs/architecture.md`](./docs/architecture.md) for how it actually
 works under the hood.
 
 ## Does it work? Real numbers, not a claim
@@ -186,6 +187,87 @@ See the "Speculative branching" section in
 [`docs/architecture.md`](./docs/architecture.md) for the full design,
 including why the flag isn't called `idempotent`.
 
+## Sandboxed isolation: a hang or crash shouldn't take down your agent
+
+`isolate=True` runs every real tool call in a freshly-spawned subprocess,
+with an optional wall-clock deadline — a hang or a crash becomes a normal
+recoverable failure instead of blocking or killing your process:
+
+```python
+wrapped = wrap(create_event, reflect=reflect, isolate=True, call_timeout=5.0)
+```
+
+This protects the *caller*, not the world the tool touches — it cannot
+undo a real-world side effect the tool already performed before it hung
+or crashed (no code-level sandbox can). It also requires `tool_fn` to be
+picklable (checked eagerly, at `wrap()` time): a module-level function or
+a bound method works; a locally-defined closure or lambda does not.
+POSIX-only, best-effort resource ceilings are available too:
+
+```python
+wrapped = wrap(create_event, reflect=reflect, isolate=True,
+                max_memory_mb=512, max_cpu_seconds=10)
+```
+
+See the "Sandboxed isolation" section in
+[`docs/architecture.md`](./docs/architecture.md) for the full design,
+including why resource caps are best-effort even on POSIX systems (an
+empirically-confirmed, not hypothetical, caveat) and why this isn't
+available through the LangGraph adapter.
+
+## Local dashboard: the oracle's contents, in a browser
+
+```bash
+pip install resilientforge[dashboard]
+resilientforge dashboard --oracle-path .resilientforge
+```
+
+Opens a small, read-only, GET-only view of the same recipes/guards/
+failure history the CLI already exposes — binds to `127.0.0.1` by
+default. `fastapi`/`uvicorn` are only pulled in by this extra, never a
+hard dependency of the base package. Try it against seeded example data:
+
+```bash
+python examples/dashboard_demo.py
+resilientforge dashboard --oracle-path examples/.resilientforge_dashboard
+```
+
+![ResilientForge Dashboard](docs/images/dashboard.png)
+
+This is `examples/dashboard_demo.py`'s seeded data, viewed in a browser —
+every number here is real, produced by actually running the recovery
+loop, not mocked for the screenshot. What each part means:
+
+- **Stats bar** — the oracle's size at a glance: how many distinct
+  failure *shapes* have a known fix (**Recipes**), how many raw
+  occurrences have ever been recorded (**Failures**), and how many
+  standing guards exist and are currently active.
+- **Recipes** — the actual cache of "failure shape → working fix." Each
+  row is one *signature* (a normalized failure shape, not one specific
+  literal value — see `docs/architecture.md`'s "Signature normalization"
+  section), the tool it belongs to, how many times it's been applied,
+  and its **success rate**: `create_event` is 100% (every replay of its
+  learned date-reparsing fix has worked); `send_reminder` is 67% (2 of
+  its 3 applications worked — the third hit a value no transform could
+  fix, see below). This success rate is exactly what standing guards use
+  to decide whether a fix is reliable enough to promote.
+- **Guards** — fixes that have proven themselves reliable enough (3+
+  applications, ≥80% success by default) to apply *before* the tool is
+  even called, not just on retry after a failure. The one row here means
+  `create_event`'s date-reparsing fix no longer costs a failed attempt
+  at all — new occurrences succeed on the first try.
+- **Recent failures** — the raw audit trail: every occurrence, whether
+  it ultimately recovered or was exhausted. The one `exhausted` row is
+  `send_reminder` being called with a value no transform could coerce
+  into an int (`minutes_before="not-a-number"`) — a genuine failure
+  ResilientForge correctly gave up on instead of fabricating a fix,
+  exactly the "know when it hasn't worked" guarantee the rest of this
+  README describes.
+
+Together, this is the tangible result of the project: a local, growing,
+inspectable memory of what's gone wrong and what fixed it — not a claim,
+something you can open in a browser and look at yourself.
+
 ## Inspecting the oracle
 
 ```bash
@@ -194,6 +276,7 @@ resilientforge list --failures         # raw failure history
 resilientforge inspect <signature>     # full detail for one recipe (prefix match OK)
 resilientforge prune --dry-run         # preview what pruning would remove
 resilientforge stats                   # counts + resolution-status breakdown
+resilientforge dashboard               # read-only web view of all of the above (Phase 4)
 
 resilientforge guards list             # standing guards (Phase 2)
 resilientforge guards inspect <tool> <argument>
@@ -206,12 +289,13 @@ resilientforge guards describe         # text to splice into your own system pro
 ```bash
 pip install resilientforge               # raw Anthropic/OpenAI tool-loop adapter
 pip install resilientforge[langgraph]    # + the LangGraph adapter
+pip install resilientforge[dashboard]    # + the local web dashboard
 ```
 
 ## Development
 
 ```bash
-pip install -e ".[dev,langgraph]"
+pip install -e ".[dev,langgraph,dashboard]"
 pytest tests/unit tests/integration          # fast, no network — default CI gate
 pytest tests/failure_injection                # the recovery-rate proof above
 pytest -m live                                 # opt-in, real API calls

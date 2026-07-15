@@ -16,12 +16,14 @@ failure shape exhausts immediately instead of attempting reflection.
 from __future__ import annotations
 
 import json
+import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
 
 from resilientforge.core.invariants import Invariant
+from resilientforge.core.isolation import check_picklable, run_isolated
 from resilientforge.core.recovery import (
     GUARD_SAFE_TRANSFORMS,
     TRANSFORM_REGISTRY,
@@ -134,6 +136,10 @@ class WrappedAgent:
         guard_promotion_min_success_rate: float = 0.8,
         num_branches: int = 1,
         side_effect_free: bool = False,
+        isolate: bool = False,
+        call_timeout: float | None = None,
+        max_memory_mb: int | None = None,
+        max_cpu_seconds: float | None = None,
     ) -> None:
         """
         side_effect_free: bool = False
@@ -154,6 +160,48 @@ class WrappedAgent:
             Only meaningful when `num_branches > 1`. Default False: Phase
             3 never risks a duplicate real-world side effect unless you
             explicitly opt in per-tool.
+
+        isolate: bool = False
+            Runs every real `tool_fn` call in a freshly-spawned
+            subprocess (Phase 4). A hang past `call_timeout`, or a crash
+            (segfault, `os._exit`, a resource-limit signal), becomes a
+            normal recoverable failure instead of taking down the host
+            process — protective isolation of the CALLER, not of the
+            world `tool_fn` touches.
+
+            This does NOT, and cannot, undo a real-world side effect
+            `tool_fn` already performed before it hung or crashed — an
+            HTTP request already sent stays sent. No code-level sandbox
+            can reverse that; only `tool_fn`'s own cooperation (retries,
+            idempotency keys, transactions) can make that safe, which is
+            exactly what `side_effect_free` already asks a caller to
+            vouch for separately.
+
+            Requires `tool_fn` to be picklable (checked eagerly here, at
+            construction, not on the first call) — a module-level
+            function or a bound method on a picklable object works; a
+            locally-defined closure or lambda does not, since the
+            subprocess boundary means `tool_fn` has to be pickled across
+            it. Default False: every prior phase's behavior is
+            unchanged unless you opt in.
+
+        call_timeout: float | None = None
+            Wall-clock seconds before an isolated call is terminated.
+            Only enforced when `isolate=True` — there is no reliable,
+            cross-platform way to preempt arbitrary in-process Python
+            code without a process boundary, so this is silently a
+            no-op (with a construction-time warning) otherwise.
+
+        max_memory_mb / max_cpu_seconds: int | float | None = None
+            POSIX-only (`resource.setrlimit`) resource ceilings applied
+            inside the isolated subprocess, before `tool_fn` runs. Only
+            enforced when `isolate=True`; a no-op with a construction-
+            time warning on Windows. Best-effort even on POSIX systems:
+            the kernel ultimately decides whether a given limit is
+            honorable at all (e.g. `RLIMIT_AS` is refused outright on
+            some POSIX systems) — a limit that can't be applied is
+            reported as its own distinct, honest failure, never silently
+            skipped and never misattributed to `tool_fn` itself.
         """
         self.tool_fn = tool_fn
         self.tool_name = tool_name
@@ -176,6 +224,26 @@ class WrappedAgent:
                 "num_branches <= 1 — there's only ever one candidate to consider.",
                 stacklevel=2,
             )
+
+        self.isolate = isolate
+        self.call_timeout = call_timeout
+        self.max_memory_mb = max_memory_mb
+        self.max_cpu_seconds = max_cpu_seconds
+        if not isolate and (call_timeout is not None or max_memory_mb is not None or max_cpu_seconds is not None):
+            warnings.warn(
+                "ResilientForge: call_timeout/max_memory_mb/max_cpu_seconds have "
+                "no effect when isolate=False — they're only enforced inside the "
+                "isolated subprocess isolate=True dispatches to.",
+                stacklevel=2,
+            )
+        if isolate and sys.platform == "win32" and (max_memory_mb is not None or max_cpu_seconds is not None):
+            warnings.warn(
+                "ResilientForge: max_memory_mb/max_cpu_seconds are POSIX-only "
+                "(resource.setrlimit) and will have no effect on Windows.",
+                stacklevel=2,
+            )
+        if isolate:
+            check_picklable(tool_fn)
 
     # -- the recovery loop -------------------------------------------------
 
@@ -418,6 +486,19 @@ class WrappedAgent:
     # -- helpers -------------------------------------------------------------
 
     def _call(self, args: dict[str, Any]) -> tuple[Any, Exception | None]:
+        if self.isolate:
+            # The one branch point for Phase 4 isolation: every real
+            # invocation (the initial attempt, recipe/reflection
+            # retries, and Phase 3's speculative real calls) already
+            # funnels through this single method, so nothing else in
+            # this class needs to change.
+            return run_isolated(
+                self.tool_fn,
+                args,
+                timeout=self.call_timeout,
+                max_memory_mb=self.max_memory_mb,
+                max_cpu_seconds=self.max_cpu_seconds,
+            )
         try:
             return self.tool_fn(**args), None
         except Exception as exc:  # intentionally broad: any tool-call failure must be caught
@@ -674,6 +755,10 @@ def wrap(
     guard_promotion_min_success_rate: float = 0.8,
     num_branches: int = 1,
     side_effect_free: bool = False,
+    isolate: bool = False,
+    call_timeout: float | None = None,
+    max_memory_mb: int | None = None,
+    max_cpu_seconds: float | None = None,
 ) -> WrappedAgent:
     """
     side_effect_free: bool = False
@@ -692,6 +777,28 @@ def wrap(
         Only meaningful when `num_branches > 1`. Default False: Phase 3
         never risks a duplicate real-world side effect unless you
         explicitly opt in per-tool.
+
+    isolate: bool = False
+        Runs every real `tool_fn` call in a freshly-spawned subprocess
+        (Phase 4). A hang past `call_timeout`, or a crash, becomes a
+        normal recoverable failure instead of taking down the host
+        process — protective isolation of the CALLER, not of the world
+        `tool_fn` touches: this does NOT, and cannot, undo a real-world
+        side effect `tool_fn` already performed before it hung or
+        crashed. Requires `tool_fn` to be picklable (checked eagerly at
+        construction) — a locally-defined closure or lambda won't work.
+
+    call_timeout: float | None = None
+        Wall-clock seconds before an isolated call is terminated. Only
+        enforced when `isolate=True`.
+
+    max_memory_mb / max_cpu_seconds: int | float | None = None
+        POSIX-only, best-effort resource ceilings applied inside the
+        isolated subprocess. Only enforced when `isolate=True`; a no-op
+        (with a warning) on Windows.
+
+    See `WrappedAgent.__init__`'s docstring for the full detail behind
+    each of these.
     """
     tool_fn = _resolve_callable(agent)
     resolved_oracle = oracle or Oracle(oracle_path)
@@ -709,4 +816,8 @@ def wrap(
         guard_promotion_min_success_rate=guard_promotion_min_success_rate,
         num_branches=num_branches,
         side_effect_free=side_effect_free,
+        isolate=isolate,
+        call_timeout=call_timeout,
+        max_memory_mb=max_memory_mb,
+        max_cpu_seconds=max_cpu_seconds,
     )

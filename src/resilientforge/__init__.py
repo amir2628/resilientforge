@@ -8,6 +8,7 @@ from resilientforge.core.engine import (
     wrap,
 )
 from resilientforge.core.invariants import Invariant
+from resilientforge.core.isolation import IsolationError
 from resilientforge.oracle.guards import GuardManager, StandingGuard
 
 __version__ = "0.1.0.dev0"
@@ -19,6 +20,7 @@ __all__ = [
     "RecoveryAttempt",
     "RecoveryExhaustedError",
     "InvariantAbortError",
+    "IsolationError",
     "GuardManager",
     "StandingGuard",
 ]

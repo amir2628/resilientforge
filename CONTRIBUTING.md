@@ -20,7 +20,7 @@ original plan (each one flagged there and in the commit that made it).
 ## Setup
 
 ```bash
-pip install -e ".[dev,langgraph]"
+pip install -e ".[dev,langgraph,dashboard]"
 ```
 
 ## Tests

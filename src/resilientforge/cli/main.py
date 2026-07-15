@@ -166,6 +166,42 @@ def stats(oracle_path: str = _ORACLE_PATH_OPTION) -> None:
         typer.echo(f"  {status:<12} {by_status[status]}")
 
 
+# -- dashboard (Phase 4) -------------------------------------------------------
+
+
+@app.command()
+def dashboard(
+    oracle_path: str = _ORACLE_PATH_OPTION,
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address. Loopback-only by default."),
+    port: int = typer.Option(8765, "--port", help="Port to serve the dashboard on."),
+) -> None:
+    """Serve a local, read-only web dashboard over this oracle's recipes,
+    guards, and failure history. Blocks until Ctrl+C.
+
+    Requires the `dashboard` extra: `pip install resilientforge[dashboard]`.
+    """
+    try:
+        import uvicorn
+
+        from resilientforge.dashboard import create_app
+    except ImportError as exc:
+        typer.echo(
+            "The dashboard needs extra dependencies. Install them with:\n"
+            "  pip install resilientforge[dashboard]"
+        )
+        raise typer.Exit(code=1) from exc
+
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        typer.echo(
+            f"WARNING: binding to {host!r} exposes this oracle's contents to more "
+            f"than just this machine. Only do this deliberately."
+        )
+
+    app_instance = create_app(oracle_path)
+    typer.echo(f"ResilientForge dashboard for {oracle_path!r} at http://{host}:{port} — Ctrl+C to stop.")
+    uvicorn.run(app_instance, host=host, port=port, log_level="warning")
+
+
 # -- guards (Phase 2) ---------------------------------------------------------
 
 

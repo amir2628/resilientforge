@@ -53,6 +53,10 @@ def wrap_tools(
     guard_promotion_min_success_rate: float = 0.8,
     num_branches: int = 1,
     side_effect_free: bool = False,
+    isolate: bool = False,
+    call_timeout: float | None = None,
+    max_memory_mb: int | None = None,
+    max_cpu_seconds: float | None = None,
 ) -> dict[str, WrappedAgent]:
     """Wrap every tool in `tools` ({name: callable}), sharing ONE Oracle
     across all of them — recipes learned recovering one tool's failures
@@ -65,6 +69,11 @@ def wrap_tools(
     `tools` — there's no per-tool override here, since `side_effect_free`
     is a real safety vouch and per-tool differences would need a
     per-tool call to `wrap()` directly instead.
+
+    `isolate`/`call_timeout`/`max_memory_mb`/`max_cpu_seconds` (Phase 4,
+    see core/engine.py's `wrap()` for the full docstring) apply the same
+    way — and the same picklability requirement `isolate=True` needs
+    applies per tool, checked eagerly when each one is wrapped below.
     """
     shared_oracle = oracle or Oracle(oracle_path)
     invariants = invariants or {}
@@ -83,6 +92,10 @@ def wrap_tools(
             guard_promotion_min_success_rate=guard_promotion_min_success_rate,
             num_branches=num_branches,
             side_effect_free=side_effect_free,
+            isolate=isolate,
+            call_timeout=call_timeout,
+            max_memory_mb=max_memory_mb,
+            max_cpu_seconds=max_cpu_seconds,
         )
         for name, fn in tools.items()
     }

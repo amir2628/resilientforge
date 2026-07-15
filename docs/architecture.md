@@ -1,6 +1,8 @@
 # Architecture
 
-This describes what's actually built (Phases 1-3). Where reality forced a
+This describes what's actually built (Phases 1-4, minus oracle
+federation — deferred, see the "Local dashboard" section below). Where
+reality forced a
 deviation or surfaced a real trade-off during the build, it's called out
 explicitly below rather than smoothed over.
 
@@ -12,6 +14,7 @@ src/resilientforge/
 │   ├── signature.py     # failure normalization/templating (the crux — see below)
 │   ├── invariants.py    # Invariant: deterministic + LLM-judged checks
 │   ├── recovery.py      # Fix generation (reflection) + application + transforms
+│   ├── isolation.py     # Phase 4: subprocess-based timeout/crash/resource isolation
 │   └── engine.py        # wrap() — ties everything into the recovery loop
 ├── oracle/
 │   ├── store.py          # SQLite: failures + recipes + guards tables (raw CRUD)
@@ -22,7 +25,10 @@ src/resilientforge/
 ├── integrations/
 │   ├── raw_tool_loop.py     # Anthropic tool_use + OpenAI function-calling shim
 │   └── langgraph_adapter.py # LangGraph ToolNode via wrap_tool_call
-└── cli/main.py           # list / inspect / prune / stats / guards *
+├── dashboard/             # Phase 4: read-only local web dashboard (optional `dashboard` extra)
+│   ├── app.py             # create_app() — FastAPI, GET-only endpoints
+│   └── _html.py           # the entire front end, one inlined string
+└── cli/main.py           # list / inspect / prune / stats / dashboard / guards *
 ```
 
 `core/` never imports `anthropic`/`openai`/`langgraph` — the model call used
@@ -266,6 +272,130 @@ every round regardless of whether a recipe already exists (see the new
 and `test_recovery_rate.py`'s explicit exemption of `num_branches>1`
 scenarios from the oracle-hit-rate assertion).
 
+## Sandboxed isolation (Phase 4) — protects the caller, not the world
+
+Stated as plainly as `side_effect_free`'s own docstring states its scope:
+undoing a real-world side effect a tool already performed (an HTTP
+request already sent, an email already dispatched) is not something any
+code-level sandbox can do — nothing in this section claims otherwise.
+What `wrap(..., isolate=True, call_timeout=...)` actually delivers is
+narrower and fully deliverable: every real `tool_fn` call runs in a
+freshly-spawned subprocess, so a hang past `call_timeout` or a crash
+(segfault, `os._exit`, a resource-limit signal) becomes a normal,
+recoverable failure — routed through the *exact same*
+`_classify_failure`/recovery loop as any other tool exception — instead
+of taking down the host process or blocking it forever.
+
+**One chokepoint, zero new call sites.** Every real invocation across
+Phases 1-3 already funneled through exactly one method,
+`WrappedAgent._call` — the initial `invoke()` attempt, recipe/reflection
+retries via `_attempt`, and Phase 3's `_try_best_proxy_ranked`/
+`_try_all_real` all call it. Isolation is a single `if self.isolate:`
+branch inside that one method (`core/isolation.py`'s `run_isolated`);
+nothing else in `engine.py` needed to change.
+
+**Why `multiprocessing.Process` directly, not
+`concurrent.futures.ProcessPoolExecutor`**: a pooled executor's
+`Future.cancel()` cannot stop a task that has already started running —
+exactly the case a timeout needs to handle. `multiprocessing.Process`
+exposes a documented, public `terminate()`/`kill()` instead, escalating
+from SIGTERM to SIGKILL if the process doesn't exit promptly. Always
+`multiprocessing.get_context("spawn")`, never `"fork"`: the parent may
+hold open `sqlite3`/`chromadb` connections (its own `Oracle`) that must
+not be duplicated into the child. A fresh subprocess per call, never
+pooled or reused — one crashed or resource-limited call can never poison
+a later one.
+
+**The picklability requirement is real, not a corner case.** `isolate=
+True` requires pickling `tool_fn` across the process boundary, so a
+locally-defined closure or lambda will not work — only a module-level
+function or a bound method on a picklable object. This is checked
+*eagerly*, at `WrappedAgent` construction (`check_picklable`), not on
+the first call — fail fast with a clear message, not a cryptic pickle
+traceback three calls in. It's also why `integrations/langgraph_adapter.py`
+deliberately does **not** expose `isolate` at all: that adapter builds a
+fresh closure over LangGraph's own live `execute` callback for every
+tool call, and `execute` is bound to in-process graph state that
+genuinely cannot be pickled — a structural incompatibility, not an
+oversight. `integrations/raw_tool_loop.py`'s `wrap_tools()` has no such
+problem, since the wrapped `tool_fn` there is the caller's own plain
+function, never a closure this codebase manufactures.
+
+**Resource caps are POSIX-only and best-effort, confirmed empirically,
+not just claimed.** `max_memory_mb`/`max_cpu_seconds` apply
+`resource.setrlimit` inside the child before `tool_fn` runs — a no-op
+(with a construction-time warning) on Windows. During development,
+`RLIMIT_CPU` reliably killed a CPU-bound infinite loop on a real macOS
+dev machine; `RLIMIT_AS` (the memory cap) was refused outright by the
+same kernel with `ValueError: current limit exceeds maximum limit` — a
+real, observed example of "the OS ultimately decides whether a limit is
+honorable at all," not a hypothetical caveat. When applying a limit
+itself fails, it's reported as its own distinct `IsolationError`
+(tagged `"limit_error"` internally), never silently ignored and never
+misattributed to `tool_fn` as if the tool itself had done something
+wrong.
+
+**No enforcement without `isolate=True`.** `call_timeout`/
+`max_memory_mb`/`max_cpu_seconds` set without `isolate=True` warn at
+construction and are otherwise no-ops — there is no reliable,
+cross-platform way to preempt arbitrary in-process Python code without a
+process boundary, so this codebase doesn't pretend otherwise with a
+same-process `signal.alarm`-based approximation.
+
+`IsolationError` is exported from the top-level package (alongside
+`InvariantAbortError`/`RecoveryExhaustedError`) so callers can catch it
+the same way.
+
+## Local dashboard (Phase 4) — read-only, localhost, zero hard dependency
+
+`resilientforge dashboard` serves a small FastAPI app (`dashboard/app.py`)
+over one oracle's recipes, guards, and failure history — the same data
+`resilientforge list`/`stats`/`guards list` already expose, in a browser
+instead of a terminal.
+
+**`fastapi`/`uvicorn` are a new optional extra (`pip install
+resilientforge[dashboard]`), never a hard dependency.** This mirrors the
+existing `langgraph` extra exactly: `resilientforge/__init__.py` imports
+nothing from `dashboard/`, and `cli/main.py`'s `dashboard` command
+imports `fastapi`/`uvicorn` lazily, inside its own function body, with a
+clear `pip install resilientforge[dashboard]` message on `ImportError`
+rather than a raw traceback — every other CLI command keeps working
+exactly as before with zero new transitive dependencies for a caller who
+never touches the dashboard.
+
+**Read-only, GET-only, on purpose.** No endpoint mutates the oracle —
+revoking a guard, pruning a recipe, etc. all stay CLI-only operations
+this round. This is a deliberate v1 scope decision (a mutation surface
+reachable from a browser is a meaningfully bigger safety surface than a
+read-only one, and nothing in the spec asked for it), not an oversight;
+easy to extend later behind its own explicit opt-in if it's ever wanted.
+Every endpoint reuses the exact same read paths `cli/main.py` already
+uses (`RecipeManager(oracle).list(...)`, `GuardManager(oracle).list(...)`,
+`oracle.list_failures(...)`) — never touching `oracle.store`/
+`oracle.vector_index` directly, same discipline the CLI already follows.
+
+**Binds to `127.0.0.1` by default, not `0.0.0.0`.** A caller has to pass
+an explicit, non-loopback `--host` to expose it beyond the local machine
+— which prints a warning when they do, the same "explicit opt-in for
+wider blast radius" pattern already used for `side_effect_free` and
+sticky guard revocation.
+
+**The entire front end is one inlined HTML/CSS/vanilla-JS string**
+(`dashboard/_html.py`), not a separate static file and not a CDN-hosted
+chart library — no hatchling package-data/MANIFEST configuration to get
+wrong, and no internet access needed to view it, consistent with
+`ChromaVectorIndex`'s own offline-embedder decision back in Phase 1 for
+the same "no network required" reason.
+
+**Oracle federation was deferred this round.** The spec itself hedges it
+as "optional" with zero elaboration (unlike the other two
+Phase 4 items), and the user chose to skip it when this phase was
+scoped. Nothing about this phase's design forecloses it — `Recipe`/
+`StandingGuard` are already plain pydantic models, trivially
+serializable, and `recipes.signature`/`guards (tool_name, argument,
+kind)` are already real primary keys a future export/import CLI could
+merge on — it's simply not built yet.
+
 ## The oracle (`oracle/`)
 
 Two backends behind one `Oracle` facade:
@@ -417,3 +547,15 @@ when `side_effect_free=False`, regardless of `num_branches`), proxy
 ranking, real-verification rejection of a candidate that applies cleanly
 but fails a real invariant, and the misconfiguration warning; alongside
 `ambiguous_fix_candidates` being added to the seven-scenario report.
+`tests/unit/test_isolation.py` (Phase 4) tests `run_isolated`/
+`check_picklable` directly — a hang genuinely terminated, a crash
+genuinely contained (proven by the test process itself surviving
+`os._exit(1)` run through it), a real CPU-limit kill, and a closure
+correctly rejected; `tests/integration/test_isolation.py` proves the
+same failure modes flow through `wrap()`'s ordinary recovery loop
+end-to-end. `tests/unit/test_dashboard.py` uses FastAPI's `TestClient`
+(the standard idiom — no real port binding needed) against every `/api/*`
+endpoint. Both Phase 4 test files add real wall-clock cost (genuine
+subprocess spawns and short sleeps) — noticeable in a way this suite's
+prior sub-3-second runtime wasn't, but still on the order of a few
+seconds, not worth a new pytest marker tier for a handful of tests.
