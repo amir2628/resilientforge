@@ -21,7 +21,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install -e ".[dev,langgraph]"
+        run: pip install -e ".[dev,langgraph,dashboard]"
 
       - name: Lint
         run: ruff check .
