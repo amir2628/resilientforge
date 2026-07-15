@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from resilientforge import GuardManager, Invariant, InvariantAbortError, RecoveryExhaustedError, wrap
 from resilientforge.core.recovery import FailureContext, parse_relative_date_to_iso
 from resilientforge.oracle import Oracle
+from resilientforge.telemetry import MetricEvent
 
 # -- example "tools" used across tests ---------------------------------------
 
@@ -502,3 +503,264 @@ def test_guard_promotion_is_scoped_per_workflow_when_workflow_id_is_set(tmp_path
 
     assert guards.get("flaky_create_event", "date", "transform") is not None
     oracle.close()
+
+
+# -- staleness safeguards (Phase 5) ---------------------------------------------
+
+
+def region_tool_factory():
+    """A tool whose "correct" fix drifts out from under a promoted guard
+    — simulating a real production concern: the underlying API's
+    behavior changed after ResilientForge already learned a fix for it.
+    `valid_regions` is mutable and shared with the test via closure."""
+    valid_regions = {"us-east"}
+
+    def region_tool(action: str, region: str | None = None) -> dict:
+        if region is None:
+            raise ValueError("region is required")
+        if region not in valid_regions:
+            raise ValueError(f"unknown region: {region!r}")
+        return {"action": action, "region": region, "status": "done"}
+
+    return region_tool, valid_regions
+
+
+def region_patch_reflect(context: FailureContext) -> dict:
+    return {"strategy": "default_region", "argument_patch": {"region": "us-east"}}
+
+
+def test_guard_auto_demotes_after_its_success_rate_drops_below_threshold(tmp_path):
+    tool, valid_regions = region_tool_factory()
+    wrapped = wrap(
+        tool,
+        oracle_path=tmp_path / "oracle",
+        reflect=region_patch_reflect,
+        tool_name="region_tool",
+        guard_promotion_min_occurrences=3,
+        guard_demotion_min_occurrences=3,
+        guard_demotion_max_failure_rate=0.5,
+    )
+
+    # 3 occurrences recover reactively (no guard yet), promoting a patch
+    # guard for region="us-east" on the 3rd.
+    wrapped.invoke(action="a")
+    wrapped.invoke(action="b")
+    wrapped.invoke(action="c")
+
+    guards = GuardManager(wrapped.oracle)
+    guard = guards.get("region_tool", "region", "patch")
+    assert guard is not None and guard.active is True
+
+    # The tool's valid region changes underneath the already-promoted
+    # guard — "us-east" is no longer valid, so the guard now fires but
+    # the call still fails every time.
+    valid_regions.clear()
+    valid_regions.add("eu-west")
+
+    for _ in range(3):
+        try:
+            wrapped.invoke(action="d")
+        except RecoveryExhaustedError:
+            pass  # expected post-drift — region_patch_reflect only ever proposes the stale value
+
+    revoked = guards.get("region_tool", "region", "patch")
+    assert revoked is not None
+    assert revoked.active is False  # auto-revoked — no operator touched this
+    assert revoked not in guards.list_active(tool_name="region_tool")
+
+
+def test_recipe_reliability_floor_skips_an_unreliable_recipe(tmp_path):
+    reflect = CountingReflect(date_fixing_reflect)
+    wrapped = wrap(
+        flaky_create_event,
+        oracle_path=tmp_path / "oracle",
+        reflect=reflect,
+        recipe_min_success_rate=0.5,
+        recipe_reliability_min_occurrences=3,
+    )
+
+    wrapped.invoke(date="next Friday", title="Standup")  # seeds the recipe
+    assert len(reflect.calls) == 1
+    recipe = wrapped.recipes.list()[0]
+
+    # Engineer a recipe that's become unreliable: 1 success, 3 failures —
+    # success_rate = 1/4 = 0.25, below the 0.5 floor, with times_applied(4)
+    # comfortably past the reliability_min_occurrences(3) threshold.
+    wrapped.recipes.record_fast_path_failure(recipe.signature)
+    wrapped.recipes.record_fast_path_failure(recipe.signature)
+    wrapped.recipes.record_fast_path_failure(recipe.signature)
+    assert wrapped.recipes.get(recipe.signature).success_rate == 0.25
+
+    # A new occurrence of the SAME failure shape: without the floor, this
+    # would replay the recipe's fast path with zero model calls (the
+    # existing, well-tested Phase 1 guarantee) — WITH the floor set and
+    # the recipe now unreliable, it must fall through to reflection instead.
+    wrapped.invoke(date="next Tuesday", title="Retro")
+
+    assert len(reflect.calls) == 2  # reflection WAS needed — the bad recipe was correctly skipped
+
+
+def test_recipe_reliability_floor_is_disabled_by_default(tmp_path):
+    # The exact same setup as above, but with no recipe_min_success_rate
+    # set — today's Phase 1-4 behavior must be completely unaffected:
+    # the fast path is used regardless of a recipe's track record.
+    reflect = CountingReflect(date_fixing_reflect)
+    wrapped = wrap(flaky_create_event, oracle_path=tmp_path / "oracle", reflect=reflect)
+
+    wrapped.invoke(date="next Friday", title="Standup")
+    recipe = wrapped.recipes.list()[0]
+    wrapped.recipes.record_fast_path_failure(recipe.signature)
+    wrapped.recipes.record_fast_path_failure(recipe.signature)
+    wrapped.recipes.record_fast_path_failure(recipe.signature)
+    assert len(reflect.calls) == 1
+
+    wrapped.invoke(date="next Tuesday", title="Retro")
+
+    assert len(reflect.calls) == 1  # unchanged: still zero additional model calls
+
+
+# -- observability (Phase 5) -----------------------------------------------------
+
+
+class MetricsCollector:
+    def __init__(self) -> None:
+        self.events: list[MetricEvent] = []
+
+    def __call__(self, event: MetricEvent) -> None:
+        self.events.append(event)
+
+
+def test_metrics_is_a_silent_no_op_when_not_provided(tmp_path):
+    # No metrics= passed at all — every call site's self._emit(...) must
+    # be a true no-op, never raising even though nothing is listening.
+    wrapped = wrap(flaky_create_event, oracle_path=tmp_path / "oracle", reflect=date_fixing_reflect)
+    result = wrapped.invoke(date="next Friday", title="Standup")
+    assert result["status"] == "created"
+
+
+def test_metrics_emits_call_result_and_recovery_resolved_on_recovery(tmp_path):
+    metrics = MetricsCollector()
+    wrapped = wrap(
+        flaky_create_event, oracle_path=tmp_path / "oracle",
+        reflect=date_fixing_reflect, metrics=metrics,
+    )
+
+    wrapped.invoke(date="next Friday", title="Standup")
+
+    call_results = [e for e in metrics.events if e.event_type == "call_result"]
+    assert len(call_results) == 2  # the failing initial call + the successful reflection retry
+    assert call_results[0].source == "initial"
+    assert call_results[0].success is False
+    assert call_results[0].error_type == "ValueError"
+    assert call_results[1].source == "reflection"
+    assert call_results[1].success is True
+    assert call_results[1].attempt_number == 1
+
+    resolved = [e for e in metrics.events if e.event_type == "recovery_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0].resolution == "recovered"
+    assert resolved[0].total_attempts == 1
+    assert all(e.tool_name == "flaky_create_event" for e in metrics.events)
+    assert all(e.timestamp for e in metrics.events)
+
+
+def test_metrics_emits_recovery_resolved_exhausted(tmp_path):
+    metrics = MetricsCollector()
+    wrapped = wrap(
+        flaky_create_event, oracle_path=tmp_path / "oracle",
+        reflect=useless_reflect, max_recovery_attempts=2, metrics=metrics,
+    )
+
+    with pytest.raises(RecoveryExhaustedError):
+        wrapped.invoke(date="next Friday", title="Standup")
+
+    resolved = [e for e in metrics.events if e.event_type == "recovery_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0].resolution == "exhausted"
+    assert resolved[0].total_attempts == 2
+
+
+def dangerous_recoverable_tool(action: str) -> dict:
+    if action == "":
+        raise ValueError("action is required")
+    return {"action": action}
+
+
+def test_metrics_emits_recovery_resolved_aborted(tmp_path):
+    # InvariantAbortError on the very first/initial call raises before
+    # `invoke()` even enters the try/except that records/emits a
+    # resolution (correctly — nothing was ever attempted). To actually
+    # exercise that path, the abort has to happen during a RETRY: an
+    # initial plain exception (recoverable) whose proposed fix happens
+    # to produce a result the abort invariant then rejects.
+    metrics = MetricsCollector()
+    invariant = Invariant(
+        name="no_delete", check=lambda r: r.get("action") != "delete", on_violation="abort"
+    )
+    def reflect_to_delete(context):
+        return {"strategy": "default_action", "argument_patch": {"action": "delete"}}
+
+    wrapped = wrap(
+        dangerous_recoverable_tool, invariants=[invariant], oracle_path=tmp_path / "oracle",
+        reflect=reflect_to_delete, metrics=metrics,
+    )
+
+    with pytest.raises(InvariantAbortError):
+        wrapped.invoke(action="")
+
+    resolved = [e for e in metrics.events if e.event_type == "recovery_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0].resolution == "aborted"
+
+
+def test_metrics_emits_guard_fired_and_guard_promoted(tmp_path):
+    metrics = MetricsCollector()
+    wrapped = wrap(
+        flaky_create_event, oracle_path=tmp_path / "oracle",
+        reflect=date_fixing_reflect, guard_promotion_min_occurrences=3, metrics=metrics,
+    )
+
+    wrapped.invoke(date="next Friday", title="A")
+    wrapped.invoke(date="next Tuesday", title="B")
+    wrapped.invoke(date="next Monday", title="C")  # 3rd success promotes a guard
+
+    promoted = [e for e in metrics.events if e.event_type == "guard_promoted"]
+    assert len(promoted) == 1
+    assert promoted[0].argument == "date"
+    assert promoted[0].kind == "transform"
+
+    wrapped.invoke(date="next Wednesday", title="D")  # now PREVENTED via the guard
+
+    fired = [e for e in metrics.events if e.event_type == "guard_fired"]
+    assert len(fired) == 1
+    assert fired[0].argument == "date"
+    assert fired[0].success is True
+
+
+def test_metrics_emits_guard_revoked_on_auto_demotion(tmp_path):
+    metrics = MetricsCollector()
+    tool, valid_regions = region_tool_factory()
+    wrapped = wrap(
+        tool, oracle_path=tmp_path / "oracle", reflect=region_patch_reflect,
+        tool_name="region_tool", guard_promotion_min_occurrences=3,
+        guard_demotion_min_occurrences=3, guard_demotion_max_failure_rate=0.5,
+        metrics=metrics,
+    )
+
+    wrapped.invoke(action="a")
+    wrapped.invoke(action="b")
+    wrapped.invoke(action="c")  # promotes the guard
+
+    valid_regions.clear()
+    valid_regions.add("eu-west")
+
+    for _ in range(3):
+        try:
+            wrapped.invoke(action="d")
+        except RecoveryExhaustedError:
+            pass
+
+    revoked = [e for e in metrics.events if e.event_type == "guard_revoked"]
+    assert len(revoked) == 1
+    assert revoked[0].argument == "region"
+    assert revoked[0].kind == "patch"

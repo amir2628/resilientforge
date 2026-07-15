@@ -119,6 +119,41 @@ def test_memory_cap_does_not_interfere_with_a_call_comfortably_under_it():
     assert result == 1 * 1024 * 1024 or isinstance(error, IsolationError)
 
 
+# -- run_isolated(): cloudpickle fallback for closures/lambdas ----------
+
+
+def _make_adder(offset):
+    def add_with_offset(x):
+        return x + offset
+
+    return add_with_offset
+
+
+def test_run_isolated_actually_executes_a_closure_via_cloudpickle():
+    # Proves the fallback genuinely WORKS end-to-end, not just that
+    # check_picklable accepts it — a real closure, dispatched to a real
+    # subprocess, cloudpickle.loads'd inside it, actually called, with
+    # the CAPTURED value (`offset`) intact.
+    add_five = _make_adder(5)
+    result, error = run_isolated(add_five, {"x": 10}, timeout=5, max_memory_mb=None, max_cpu_seconds=None)
+    assert result == 15
+    assert error is None
+
+
+def test_run_isolated_returns_the_closures_own_exception_via_cloudpickle():
+    def raise_via_closure(x):
+        if x < 0:
+            raise ValueError(f"negative: {x}")
+        return x
+
+    result, error = run_isolated(
+        raise_via_closure, {"x": -1}, timeout=5, max_memory_mb=None, max_cpu_seconds=None
+    )
+    assert result is None
+    assert isinstance(error, ValueError)
+    assert str(error) == "negative: -1"
+
+
 # -- check_picklable() ---------------------------------------------------
 
 
@@ -126,7 +161,16 @@ def test_check_picklable_accepts_module_level_function():
     check_picklable(_add)  # must not raise
 
 
-def test_check_picklable_rejects_a_local_closure():
+def test_check_picklable_rejects_a_local_closure_without_cloudpickle(monkeypatch):
+    # Simulates the `isolation` extra NOT being installed — the standard
+    # way to test an optional-import fallback: sys.modules[name] = None
+    # makes `import cloudpickle` raise ImportError, same as it genuinely
+    # not being installed. cloudpickle IS installed in this dev
+    # environment (it's a `dev` extra too, for exactly the tests below),
+    # so without this, this test would no longer exercise "neither path
+    # works" at all.
+    monkeypatch.setitem(sys.modules, "cloudpickle", None)
+
     def local_closure(x):
         return x
 
@@ -134,6 +178,34 @@ def test_check_picklable_rejects_a_local_closure():
         check_picklable(local_closure)
 
 
-def test_check_picklable_rejects_a_lambda():
+def test_check_picklable_rejects_a_lambda_without_cloudpickle(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cloudpickle", None)
     with pytest.raises(IsolationError, match="picklable"):
         check_picklable(lambda x: x)
+
+
+def test_check_picklable_accepts_a_closure_via_cloudpickle_fallback():
+    # cloudpickle IS available here (dev dependency) — this is the
+    # actual point of the fallback: a closure that stdlib pickle alone
+    # would reject now passes.
+    def local_closure(x):
+        return x
+
+    check_picklable(local_closure)  # must not raise
+
+
+def test_check_picklable_accepts_a_lambda_via_cloudpickle_fallback():
+    check_picklable(lambda x: x)  # must not raise
+
+
+def test_check_picklable_rejects_something_even_cloudpickle_cant_serialize():
+    # A genuinely unpicklable object (a bound method on an object holding
+    # an open file handle-like resource — here, a generator, which
+    # neither pickle nor cloudpickle can serialize) should still fail,
+    # with a message distinguishing "cloudpickle also failed" from
+    # "cloudpickle not installed".
+    def make_generator():
+        yield 1
+
+    with pytest.raises(IsolationError, match="cloudpickle"):
+        check_picklable(make_generator())

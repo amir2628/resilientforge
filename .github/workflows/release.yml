@@ -1,0 +1,69 @@
+name: Release
+
+# Dormant by design: triggers on a version tag push, builds the sdist +
+# wheel, and publishes to PyPI ONLY if a PYPI_API_TOKEN secret has been
+# configured on this repository. Nothing in this project's own tooling
+# ever publishes anything automatically — this workflow does nothing
+# more than build artifacts until a human deliberately adds that secret
+# AND pushes a tag, both of which are outside this file's control.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Check whether a PyPI token is configured
+        id: check_token
+        run: |
+          if [ -n "${{ secrets.PYPI_API_TOKEN }}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to PyPI
+        if: steps.check_token.outputs.has_token == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: No token configured — build-only, nothing published
+        if: steps.check_token.outputs.has_token == 'false'
+        run: |
+          echo "PYPI_API_TOKEN is not set on this repository — build artifacts"
+          echo "were produced (see the 'dist' artifact on this run) but nothing"
+          echo "was published. Add the secret in repo Settings > Secrets and"
+          echo "Actions, then push a new tag, to actually publish a release."

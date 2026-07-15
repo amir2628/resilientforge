@@ -21,7 +21,7 @@ precedence over automatic promotion.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
@@ -163,17 +163,76 @@ class GuardManager:
             revoked.append(guard)
         return revoked
 
+    def prune(
+        self,
+        *,
+        min_success_rate: float = 0.0,
+        min_times_applied: int = 1,
+        max_age_days: float | None = None,
+        now: datetime | None = None,
+        dry_run: bool = False,
+    ) -> list[tuple[str, str, str]]:
+        """Delete guards that are unreliable (success_rate below the
+        floor, once applied at least `min_times_applied` times) and/or
+        stale (`last_applied` older than `max_age_days`) — mirrors
+        `RecipeManager.prune` exactly, for parity (Phase 5: guards had
+        no equivalent to this at all before). Returns the
+        `(tool_name, argument, kind)` triples that were (or, with
+        `dry_run=True`, would be) pruned.
+
+        Distinct from `revoke()`: `revoke()` is a sticky, explicit "no"
+        an operator chose; `prune()` is unattended maintenance removing
+        guards that have quietly stopped being useful — same
+        distinction `RecipeManager.prune` already draws for recipes. A
+        guard that's never been applied (`last_applied is None`) is
+        never treated as stale by age — there's no age to measure yet.
+        """
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=max_age_days) if max_age_days is not None else None
+
+        pruned: list[tuple[str, str, str]] = []
+        for guard in self.list(active_only=False, limit=10_000):
+            stale = (
+                cutoff is not None
+                and guard.last_applied is not None
+                and datetime.fromisoformat(guard.last_applied) < cutoff
+            )
+            unreliable = (
+                guard.times_applied >= min_times_applied
+                and guard.success_rate < min_success_rate
+            )
+            if stale or unreliable:
+                if not dry_run:
+                    self.oracle.delete_guard(guard.tool_name, guard.argument, guard.kind)
+                pruned.append((guard.tool_name, guard.argument, guard.kind))
+        return pruned
+
     def record_application(self, guards: list[StandingGuard], *, succeeded: bool) -> None:
-        """Bump times_applied (+1 each)/times_succeeded (+1 if succeeded)/
-        success_rate/last_applied for every guard that fired on one call."""
+        """Atomically bump times_applied (+1 each)/times_succeeded (+1
+        if succeeded)/success_rate/last_applied for every guard that
+        fired on one call.
+
+        Phase 5: this used to increment an in-memory `StandingGuard`
+        (fetched earlier, before the call was even attempted) and write
+        it back — a lost-update race under concurrent applications of
+        the same guard, found by actually load-testing it (see
+        `oracle/store.py`'s `record_guard_application`, one atomic SQL
+        statement per guard now). Mutates the `guard` objects passed in
+        with the freshly-read, post-increment values, so callers (e.g.
+        `WrappedAgent._maybe_demote_guards`) see the CURRENT numbers —
+        same in-place-mutation contract as before, just correct under
+        concurrency now."""
         now = _utcnow()
         for guard in guards:
-            guard.times_applied += 1
-            if succeeded:
-                guard.times_succeeded += 1
-            guard.success_rate = guard.times_succeeded / guard.times_applied
-            guard.last_applied = now
-            self.oracle.upsert_guard(guard._to_row())
+            row = self.oracle.record_guard_application(
+                guard.tool_name, guard.argument, guard.kind, succeeded=succeeded, now=now
+            )
+            if row is None:
+                continue  # guard was deleted/pruned between firing and this call
+            guard.times_applied = row.times_applied
+            guard.times_succeeded = row.times_succeeded
+            guard.success_rate = row.success_rate
+            guard.last_applied = row.last_applied
 
     def describe(self, tool_name: str | None = None) -> str:
         """Human/LLM-readable text block for active guards. The caller

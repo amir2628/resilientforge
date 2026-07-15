@@ -19,5 +19,6 @@ tests/failure_injection/reports/
 
 .env
 .DS_Store
+.claude/
 
 PROJECT_SPEC.md

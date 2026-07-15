@@ -35,6 +35,7 @@ from resilientforge.core.engine import InvariantAbortError, RecoveryExhaustedErr
 from resilientforge.core.invariants import Invariant
 from resilientforge.core.recovery import FailureContext, Fix, ReflectFn
 from resilientforge.oracle import Oracle
+from resilientforge.telemetry.metrics import MetricsHook
 
 # -- wiring multiple tools to a shared oracle ---------------------------------
 
@@ -57,6 +58,11 @@ def wrap_tools(
     call_timeout: float | None = None,
     max_memory_mb: int | None = None,
     max_cpu_seconds: float | None = None,
+    guard_demotion_min_occurrences: int = 3,
+    guard_demotion_max_failure_rate: float = 0.5,
+    recipe_min_success_rate: float | None = None,
+    recipe_reliability_min_occurrences: int = 3,
+    metrics: MetricsHook | None = None,
 ) -> dict[str, WrappedAgent]:
     """Wrap every tool in `tools` ({name: callable}), sharing ONE Oracle
     across all of them — recipes learned recovering one tool's failures
@@ -74,6 +80,12 @@ def wrap_tools(
     see core/engine.py's `wrap()` for the full docstring) apply the same
     way — and the same picklability requirement `isolate=True` needs
     applies per tool, checked eagerly when each one is wrapped below.
+
+    `guard_demotion_*`/`recipe_min_success_rate`/
+    `recipe_reliability_min_occurrences`/`metrics` (Phase 5, see
+    core/engine.py's `wrap()` for the full docstrings) apply the same
+    way to every tool — `metrics` in particular means one `MetricsHook`
+    sees every tool's events, distinguishable by `MetricEvent.tool_name`.
     """
     shared_oracle = oracle or Oracle(oracle_path)
     invariants = invariants or {}
@@ -96,6 +108,11 @@ def wrap_tools(
             call_timeout=call_timeout,
             max_memory_mb=max_memory_mb,
             max_cpu_seconds=max_cpu_seconds,
+            guard_demotion_min_occurrences=guard_demotion_min_occurrences,
+            guard_demotion_max_failure_rate=guard_demotion_max_failure_rate,
+            recipe_min_success_rate=recipe_min_success_rate,
+            recipe_reliability_min_occurrences=recipe_reliability_min_occurrences,
+            metrics=metrics,
         )
         for name, fn in tools.items()
     }
@@ -211,7 +228,7 @@ def execute_openai_tool_call(
     return _openai_tool_message(tool_call.id, _stringify_result(result))
 
 
-# -- default Anthropic-backed reflect() ---------------------------------------
+# -- default reflect() implementations -----------------------------------------
 
 _FIX_TOOL_NAME = "propose_fix"
 
@@ -231,6 +248,47 @@ def _fix_tool_schema() -> dict[str, Any]:
             "value."
         ),
         "input_schema": Fix.model_json_schema(),
+    }
+
+
+def _flat_fix_schema() -> dict[str, Any]:
+    """A hand-authored, flattened equivalent of `Fix.model_json_schema()`
+    — no `$defs`/`$ref`. Claude follows the raw pydantic schema fine (see
+    `_fix_tool_schema` above), but empirically (tested against a local
+    Qwen2.5 model via Ollama while building `create_local_reflect`)
+    smaller/local models' tool-calling gets confused by `$defs`/`$ref`
+    indirection and starts inventing its own wrapper structure instead of
+    the requested one. Kept separate from `_fix_tool_schema` rather than
+    replacing it, since Claude doesn't need this workaround."""
+    return {
+        "type": "object",
+        "properties": {
+            "strategy": {
+                "type": "string",
+                "description": "short name for the fix strategy, e.g. reformat_argument",
+            },
+            "root_cause": {
+                "type": "string",
+                "description": "one-sentence explanation of why the call failed",
+            },
+            "argument_patch": {
+                "type": "object",
+                "description": "literal key-value overrides for arguments, or an empty object",
+            },
+            "transforms": {
+                "type": "array",
+                "description": "named transforms to apply, or an empty array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "argument": {"type": "string"},
+                        "transform": {"type": "string"},
+                    },
+                    "required": ["argument", "transform"],
+                },
+            },
+        },
+        "required": ["strategy"],
     }
 
 
@@ -282,5 +340,71 @@ def create_anthropic_reflect(client: Any = None, model: str = "claude-sonnet-5")
         raise RuntimeError(
             f"reflection call did not return a {_FIX_TOOL_NAME!r} tool_use block"
         )
+
+    return _reflect
+
+
+def create_local_reflect(
+    client: Any = None,
+    base_url: str = "http://localhost:11434/v1",
+    api_key: str = "ollama",
+    model: str = "qwen2.5:7b",
+) -> ReflectFn:
+    """Build a `reflect` callable backed by any locally-hosted,
+    OpenAI-compatible chat completions endpoint — developed and verified
+    against Ollama (`base_url`/`api_key` default to Ollama's own
+    OpenAI-compatibility endpoint, no Ollama-specific code involved), but
+    works with anything speaking the same protocol (LM Studio, vLLM's
+    `--api-key`/OpenAI-compatible server, etc.).
+
+    Exists for the same reason `create_anthropic_reflect` exists — a
+    concrete, ready-to-use `reflect` for people who don't want (or, for
+    testing/dogfooding without incurring API cost, can't yet) call a
+    paid hosted API. `reflect` was always meant to be vendor-neutral and
+    freely swappable (see `core/recovery.py`'s module docstring); this is
+    proof by demonstration, not a special case.
+
+    Uses `_flat_fix_schema()`, not `Fix.model_json_schema()` — see that
+    function's docstring for why: local models' tool-calling was found,
+    empirically, to be far less reliable than Claude's at following a
+    schema with `$defs`/`$ref` indirection. `temperature=0` for the same
+    reason — this is a structured-extraction task, not creative writing.
+
+    `client` defaults to a real `openai.OpenAI(base_url=..., api_key=...)`
+    — inject a fake/mock client in tests so no network call happens
+    outside the opt-in `live` test tier. The import is local to this
+    function so `openai` is only required if this factory is actually
+    used (it already is a base dependency of this package, unlike
+    `anthropic` needing no extra install either — this needs no new
+    dependency at all).
+    """
+    if client is None:
+        import openai
+
+        client = openai.OpenAI(base_url=base_url, api_key=api_key)
+
+    def _reflect(context: FailureContext) -> dict[str, Any]:
+        response = client.chat.completions.create(
+            model=model,
+            temperature=0,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": _FIX_TOOL_NAME,
+                        "description": _fix_tool_schema()["description"],
+                        "parameters": _flat_fix_schema(),
+                    },
+                }
+            ],
+            tool_choice={"type": "function", "function": {"name": _FIX_TOOL_NAME}},
+            messages=[{"role": "user", "content": _build_reflect_prompt(context)}],
+        )
+        tool_calls = response.choices[0].message.tool_calls
+        if not tool_calls:
+            raise RuntimeError(
+                f"reflection call did not return a {_FIX_TOOL_NAME!r} tool call"
+            )
+        return json.loads(tool_calls[0].function.arguments)
 
     return _reflect

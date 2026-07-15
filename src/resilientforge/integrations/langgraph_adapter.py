@@ -83,6 +83,7 @@ from resilientforge import InvariantAbortError, RecoveryExhaustedError, wrap
 from resilientforge.core.invariants import Invariant
 from resilientforge.core.recovery import ReflectFn
 from resilientforge.oracle import Oracle
+from resilientforge.telemetry.metrics import MetricsHook
 
 ExecuteFn = Callable[[ToolCallRequest], Any]
 ToolCallWrapperFn = Callable[[ToolCallRequest, ExecuteFn], Any]
@@ -120,6 +121,11 @@ def make_resilientforge_tool_call_wrapper(
     guard_promotion_min_success_rate: float = 0.8,
     num_branches: int = 1,
     side_effect_free: bool = False,
+    guard_demotion_min_occurrences: int = 3,
+    guard_demotion_max_failure_rate: float = 0.5,
+    recipe_min_success_rate: float | None = None,
+    recipe_reliability_min_occurrences: int = 3,
+    metrics: MetricsHook | None = None,
 ) -> ToolCallWrapperFn:
     """Build a `wrap_tool_call` callable to pass into your OWN
     `ToolNode(..., wrap_tool_call=...)`. This module never constructs a
@@ -150,6 +156,12 @@ def make_resilientforge_tool_call_wrapper(
     are NOT available through this adapter — see this module's docstring
     for why (the tool_fn built here is a closure over LangGraph's own
     live `execute` callback, which cannot be pickled into a subprocess).
+
+    Phase 5's `guard_demotion_*`/`recipe_min_success_rate`/
+    `recipe_reliability_min_occurrences`/`metrics` (see core/engine.py's
+    `wrap()` for the full docstrings) apply the same way as every other
+    param here — one shared behavior across every tool_call this wrapper
+    handles.
     """
     resolved_oracle = oracle or Oracle(oracle_path)
 
@@ -171,6 +183,11 @@ def make_resilientforge_tool_call_wrapper(
             guard_promotion_min_success_rate=guard_promotion_min_success_rate,
             num_branches=num_branches,
             side_effect_free=side_effect_free,
+            guard_demotion_min_occurrences=guard_demotion_min_occurrences,
+            guard_demotion_max_failure_rate=guard_demotion_max_failure_rate,
+            recipe_min_success_rate=recipe_min_success_rate,
+            recipe_reliability_min_occurrences=recipe_reliability_min_occurrences,
+            metrics=metrics,
         )
         try:
             return wrapped.invoke(**call_args)
@@ -212,6 +229,11 @@ def make_tool_node(
     guard_promotion_min_success_rate: float = 0.8,
     num_branches: int = 1,
     side_effect_free: bool = False,
+    guard_demotion_min_occurrences: int = 3,
+    guard_demotion_max_failure_rate: float = 0.5,
+    recipe_min_success_rate: float | None = None,
+    recipe_reliability_min_occurrences: int = 3,
+    metrics: MetricsHook | None = None,
     **tool_node_kwargs: Any,
 ) -> ToolNode:
     """Convenience: build a fully configured ToolNode in one call, for
@@ -244,6 +266,11 @@ def make_tool_node(
         guard_promotion_min_success_rate=guard_promotion_min_success_rate,
         num_branches=num_branches,
         side_effect_free=side_effect_free,
+        guard_demotion_min_occurrences=guard_demotion_min_occurrences,
+        guard_demotion_max_failure_rate=guard_demotion_max_failure_rate,
+        recipe_min_success_rate=recipe_min_success_rate,
+        recipe_reliability_min_occurrences=recipe_reliability_min_occurrences,
+        metrics=metrics,
     )
     return ToolNode(
         tools,

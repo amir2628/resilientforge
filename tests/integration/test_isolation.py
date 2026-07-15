@@ -85,9 +85,51 @@ def test_resource_caps_on_windows_warn(tmp_path, monkeypatch):
 # -- fail-fast picklability check -----------------------------------------
 
 
-def test_isolate_true_with_unpicklable_tool_fails_fast_at_construction(tmp_path):
+def test_isolate_true_with_unpicklable_tool_fails_fast_without_cloudpickle(tmp_path, monkeypatch):
+    # Simulates the `isolation` extra NOT being installed (see
+    # test_isolation.py's unit-level equivalent for why sys.modules
+    # patching, not just "don't install it", is how this gets tested —
+    # cloudpickle IS a real dev-environment dependency here).
+    monkeypatch.setitem(sys.modules, "cloudpickle", None)
+
     def local_closure(value: int) -> dict:
         return {"value": value}
 
     with pytest.raises(IsolationError, match="picklable"):
         wrap(local_closure, oracle_path=tmp_path / "oracle", isolate=True)
+
+
+# -- cloudpickle fallback (Phase 5): isolate=True works for closures too --
+
+
+def make_validating_closure(valid_values: set) -> object:
+    """A closure — exactly what stdlib pickle alone could never isolate.
+    Captures `valid_values` by value, read-only, never mutated — a
+    real constraint of isolate=True, not just this test's design: each
+    call gets a completely fresh, independent subprocess, so mutable
+    state a closure captures (a counter, a cache) does NOT persist
+    across separate isolated calls the way it would for an ordinary
+    in-process closure — only what's captured at cloudpickle-serialization
+    time for THAT call is visible, every time. See core/isolation.py's
+    module docstring."""
+
+    def validate(value: int) -> dict:
+        if value not in valid_values:
+            raise ValueError(f"{value} not in {sorted(valid_values)}")
+        return {"value": value, "status": "done"}
+
+    return validate
+
+
+def test_isolate_true_works_end_to_end_with_a_closure_via_cloudpickle(tmp_path):
+    wrapped = wrap(
+        make_validating_closure({7}),
+        oracle_path=tmp_path / "oracle",
+        reflect=lambda ctx: {"strategy": "coerce_to_valid_value", "argument_patch": {"value": 7}},
+        isolate=True,
+        tool_name="validating_closure",
+    )
+
+    result = wrapped.invoke(value=999)  # not in {7} -> fails -> reflect corrects it -> retried, isolated, succeeds
+
+    assert result == {"value": 7, "status": "done"}

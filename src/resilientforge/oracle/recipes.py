@@ -89,50 +89,36 @@ class RecipeManager:
         fix_strategy: str | None = None,
     ) -> Recipe:
         """A fix for `signature` just worked and passed re-verification —
-        create the recipe if this is the first time, or update
-        times_applied/times_succeeded/success_rate if it already existed."""
+        create the recipe if this is the first time, or atomically
+        increment times_applied/times_succeeded/success_rate if it
+        already existed.
+
+        Phase 5: this used to read the recipe's current counters in
+        Python, compute new ones, then write them back in a separate
+        statement — a genuine lost-update race under concurrent access,
+        found by actually load-testing it, not by inspection (see
+        `oracle/store.py`'s `record_recipe_success`, which this now
+        delegates to for a single atomic SQL statement instead)."""
         now = _utcnow().isoformat()
-        existing = self.oracle.get_recipe(signature)
-        if existing is None:
-            recipe = Recipe(
-                signature=signature,
-                tool_name=tool_name,
-                fix_detail=fix_detail,
-                root_cause=root_cause,
-                fix_strategy=fix_strategy,
-                times_applied=1,
-                times_succeeded=1,
-                success_rate=1.0,
-                created_at=now,
-                last_used=now,
-            )
-        else:
-            recipe = Recipe._from_row(existing)
-            recipe.times_applied += 1
-            recipe.times_succeeded += 1
-            recipe.success_rate = recipe.times_succeeded / recipe.times_applied
-            recipe.fix_detail = fix_detail
-            recipe.root_cause = root_cause or recipe.root_cause
-            recipe.fix_strategy = fix_strategy or recipe.fix_strategy
-            recipe.last_used = now
-        self.oracle.upsert_recipe(recipe._to_row())
-        return recipe
+        row = self.oracle.record_recipe_success(
+            signature=signature,
+            tool_name=tool_name,
+            fix_detail=fix_detail,
+            root_cause=root_cause,
+            fix_strategy=fix_strategy,
+            now=now,
+        )
+        return Recipe._from_row(row)
 
     def record_fast_path_failure(self, signature: str) -> Recipe | None:
         """A known recipe's fix was replayed on the fast path (no fresh LLM
-        call) but did NOT pass re-verification this time — update
-        times_applied/success_rate without incrementing times_succeeded.
-        Returns None if no recipe exists for this signature (nothing to
-        update)."""
-        existing = self.oracle.get_recipe(signature)
-        if existing is None:
-            return None
-        recipe = Recipe._from_row(existing)
-        recipe.times_applied += 1
-        recipe.success_rate = recipe.times_succeeded / recipe.times_applied
-        recipe.last_used = _utcnow().isoformat()
-        self.oracle.upsert_recipe(recipe._to_row())
-        return recipe
+        call) but did NOT pass re-verification this time — atomically
+        increment times_applied/success_rate without incrementing
+        times_succeeded (Phase 5: same atomicity fix as
+        `record_success` above). Returns None if no recipe exists for
+        this signature (nothing to update)."""
+        row = self.oracle.record_recipe_fast_path_failure(signature, _utcnow().isoformat())
+        return Recipe._from_row(row) if row else None
 
     def get(self, signature: str) -> Recipe | None:
         row = self.oracle.get_recipe(signature)

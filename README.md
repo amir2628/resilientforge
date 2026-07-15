@@ -1,8 +1,11 @@
 # ResilientForge
 
 **Status:** Phase 1 (MVP), Phase 2 (standing guards + continuous checks),
-Phase 3 (speculative branching), and Phase 4 (sandboxed isolation + a local
-dashboard — oracle federation deferred) complete. Not yet published to PyPI.
+Phase 3 (speculative branching), Phase 4 (sandboxed isolation + a local
+dashboard — oracle federation deferred), and Phase 5 (production
+hardening: live model validation, observability, schema migration,
+staleness safeguards, and concurrency fixes) complete. Not yet published
+to PyPI.
 
 ResilientForge is a small, framework-agnostic Python library that sits on top of an
 agent's existing tool-calling loop and adds **persistent, cross-run failure memory**.
@@ -201,7 +204,9 @@ This protects the *caller*, not the world the tool touches — it cannot
 undo a real-world side effect the tool already performed before it hung
 or crashed (no code-level sandbox can). It also requires `tool_fn` to be
 picklable (checked eagerly, at `wrap()` time): a module-level function or
-a bound method works; a locally-defined closure or lambda does not.
+a bound method works out of the box; a locally-defined closure or lambda
+needs `pip install resilientforge[isolation]` (adds `cloudpickle`, which
+can serialize those too — falls back to it automatically when installed).
 POSIX-only, best-effort resource ceilings are available too:
 
 ```python
@@ -268,6 +273,29 @@ Together, this is the tangible result of the project: a local, growing,
 inspectable memory of what's gone wrong and what fixed it — not a claim,
 something you can open in a browser and look at yourself.
 
+## Observability: watch the recovery loop as it runs
+
+The dashboard shows the oracle's contents *after the fact*. `metrics` is
+a live counterpart — a callable that sees events as they actually
+happen: every real tool call, how a recovery ultimately resolved, and
+when a guard fires, gets promoted, or gets revoked.
+
+```python
+from resilientforge import wrap
+from resilientforge.telemetry import LoggingMetricsHook
+
+wrapped = wrap(create_event, reflect=reflect, metrics=LoggingMetricsHook())
+```
+
+`LoggingMetricsHook` is a zero-dependency reference implementation using
+stdlib `logging` — configure the `resilientforge.metrics` logger the
+normal way to send it wherever your logs already go, or write your own
+`MetricsHook` (any `Callable[[MetricEvent], None]`) for Prometheus,
+Datadog, OpenTelemetry, or anything else. See `examples/walkthrough_demo.py`
+for it running live alongside the printed recovery narration, and the
+"Observability" section in [`docs/architecture.md`](./docs/architecture.md)
+for the full event list.
+
 ## Inspecting the oracle
 
 ```bash
@@ -281,6 +309,7 @@ resilientforge dashboard               # read-only web view of all of the above 
 resilientforge guards list             # standing guards (Phase 2)
 resilientforge guards inspect <tool> <argument>
 resilientforge guards revoke <tool> <argument>
+resilientforge guards prune --dry-run  # unattended maintenance (Phase 5) -- see docs/architecture.md
 resilientforge guards describe         # text to splice into your own system prompt
 ```
 
@@ -290,12 +319,15 @@ resilientforge guards describe         # text to splice into your own system pro
 pip install resilientforge               # raw Anthropic/OpenAI tool-loop adapter
 pip install resilientforge[langgraph]    # + the LangGraph adapter
 pip install resilientforge[dashboard]    # + the local web dashboard
+pip install resilientforge[isolation]    # + isolate=True support for closures/lambdas
+pip install resilientforge[semantic]     # + an optional semantic embedder (~1GB — see docs/architecture.md
+                                          #   before installing: it didn't outperform the default on our own benchmark)
 ```
 
 ## Development
 
 ```bash
-pip install -e ".[dev,langgraph,dashboard]"
+pip install -e ".[dev,langgraph,dashboard,isolation]"
 pytest tests/unit tests/integration          # fast, no network — default CI gate
 pytest tests/failure_injection                # the recovery-rate proof above
 pytest -m live                                 # opt-in, real API calls

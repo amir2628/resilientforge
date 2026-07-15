@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "resilientforge"
-version = "0.1.0.dev0"
+version = "0.2.0"
 description = "Persistent, cross-run failure memory for tool-calling agents."
 readme = "README.md"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ authors = [
     { name = "ResilientForge contributors" },
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -38,11 +38,18 @@ dashboard = [
     "fastapi>=0.100",
     "uvicorn>=0.23",
 ]
+isolation = [
+    "cloudpickle>=3.0",
+]
+semantic = [
+    "sentence-transformers>=2.2",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "httpx>=0.24",
+    "cloudpickle>=3.0",
 ]
 
 [project.scripts]
@@ -60,8 +67,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "live: opt-in tests that make real API calls (deselected by default)",
+    "load: opt-in concurrency/throughput tests, slower and hardware-dependent (deselected by default)",
 ]
-addopts = "-m 'not live'"
+addopts = "-m 'not live and not load'"
 
 [tool.ruff]
 line-length = 100

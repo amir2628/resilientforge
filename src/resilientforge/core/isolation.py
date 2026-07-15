@@ -18,6 +18,34 @@ exactly the case a timeout needs to handle — `multiprocessing.Process`
 exposes a documented, public `terminate()`/`kill()` instead. A fresh
 process per call, never reused, so one crashed or resource-limited call
 can never poison a later one.
+
+Picklability (Phase 5): `multiprocessing`'s "spawn" context pickles
+`target`/`args` with stdlib `pickle`, which cannot serialize closures or
+lambdas — the fast, dependency-free path below (`_worker`, passing
+`tool_fn` by reference) only works for module-level functions and bound
+methods. `cloudpickle` (optional `isolation` extra — `pip install
+resilientforge[isolation]`) CAN serialize closures/lambdas, so it's used
+as a fallback: `tool_fn` is serialized to bytes with cloudpickle in the
+PARENT, those bytes (always stdlib-picklable — bytes trivially are) are
+what actually crosses the `Process(args=...)` boundary, and a second,
+fixed, always-picklable-by-reference worker (`_cloudpickle_worker`)
+reconstructs the real callable with `cloudpickle.loads` INSIDE the
+child. `multiprocessing` itself never needs to know cloudpickle exists —
+it only ever sees bytes.
+
+A real, non-obvious consequence, found while testing the fallback:
+mutable state a closure captures does NOT persist across separate
+isolated calls. Every call re-serializes `tool_fn` fresh from whatever
+the PARENT process's copy currently holds, and each call's mutations
+happen only inside that call's own, independent, short-lived
+subprocess — never communicated back. A closure like `def make_counter():
+n = 0; def f(): nonlocal n; n += 1; ...; return f` would see `n` reset
+to its captured value on every single isolated call, not actually
+accumulate. This isn't a bug to fix — it's inherent to what "a fresh
+process per call" means — but it does mean `isolate=True` tools should
+be effectively stateless (or rely on external state — a file, a
+database, an API — not in-process Python state) for behavior that's
+supposed to change across occurrences.
 """
 
 from __future__ import annotations
@@ -40,21 +68,41 @@ class IsolationError(Exception):
     any) was undone."""
 
 
-def check_picklable(tool_fn: Callable[..., Any]) -> None:
-    """Fail fast — at `WrappedAgent` construction, not on the first
-    call — if `tool_fn` can't be pickled. `isolate=True` dispatches to a
-    spawned subprocess, which requires pickling the target across the
-    process boundary: a locally-defined closure or a lambda will not
-    work here; a module-level function or a bound method on a picklable
-    object will."""
+def _stdlib_picklable(tool_fn: Callable[..., Any]) -> bool:
     try:
         pickle.dumps(tool_fn)
-    except (pickle.PicklingError, AttributeError, TypeError) as exc:
+        return True
+    except (pickle.PicklingError, AttributeError, TypeError):
+        return False
+
+
+def check_picklable(tool_fn: Callable[..., Any]) -> None:
+    """Fail fast — at `WrappedAgent` construction, not on the first
+    call — if `tool_fn` can't be pickled by EITHER path available:
+    stdlib `pickle` (the fast, dependency-free default — a module-level
+    function or a bound method on a picklable object) or, if the
+    `isolation` extra is installed, `cloudpickle` (handles closures and
+    lambdas too). Raises with a message naming both remedies if neither
+    works."""
+    if _stdlib_picklable(tool_fn):
+        return
+    try:
+        import cloudpickle
+    except ImportError:
         raise IsolationError(
             f"isolate=True requires tool_fn to be picklable (it runs in a "
-            f"separate process), but {tool_fn!r} is not picklable: {exc}. "
-            f"A closure or lambda won't work here — use a module-level "
-            f"function or a bound method on a picklable object."
+            f"separate process), but {tool_fn!r} is not picklable with the "
+            f"standard library's pickle — a closure or lambda won't work "
+            f"there. Either install `pip install resilientforge[isolation]` "
+            f"(adds cloudpickle, which CAN serialize closures/lambdas), or "
+            f"use a module-level function or a bound method instead."
+        ) from None
+    try:
+        cloudpickle.dumps(tool_fn)
+    except Exception as exc:
+        raise IsolationError(
+            f"isolate=True requires tool_fn to be picklable, but {tool_fn!r} "
+            f"could not be serialized even with cloudpickle (installed): {exc}"
         ) from exc
 
 
@@ -79,16 +127,17 @@ def _apply_resource_limits(max_memory_mb: int | None, max_cpu_seconds: float | N
         resource.setrlimit(resource.RLIMIT_CPU, (limit_seconds, limit_seconds))
 
 
-def _worker(
+def _run_and_report(
     result_queue: multiprocessing.Queue,
     tool_fn: Callable[..., Any],
     args: dict[str, Any],
     max_memory_mb: int | None,
     max_cpu_seconds: float | None,
 ) -> None:
-    """The child process's entire body. Module-level (not nested inside
-    `run_isolated`) because `multiprocessing`'s spawn context must be
-    able to pickle this function itself to send it to the child."""
+    """The actual in-child work, shared by both entry points below
+    (`_worker` for the stdlib-pickle-by-reference path, `_cloudpickle_worker`
+    for the cloudpickle-bytes path) — reconstructing `tool_fn` differs
+    between the two, everything after that is identical."""
     try:
         _apply_resource_limits(max_memory_mb, max_cpu_seconds)
     except Exception as exc:
@@ -103,6 +152,46 @@ def _worker(
         result_queue.put(("ok", result))
     except Exception as exc:  # the tool's own exception — sent back as data, not raised here
         result_queue.put(("error", exc))
+
+
+def _worker(
+    result_queue: multiprocessing.Queue,
+    tool_fn: Callable[..., Any],
+    args: dict[str, Any],
+    max_memory_mb: int | None,
+    max_cpu_seconds: float | None,
+) -> None:
+    """The child process's entire body for the stdlib-pickle-by-reference
+    path (the fast, dependency-free default). Module-level (not nested
+    inside `run_isolated`) because `multiprocessing`'s spawn context
+    must be able to pickle this function itself to send it to the
+    child."""
+    _run_and_report(result_queue, tool_fn, args, max_memory_mb, max_cpu_seconds)
+
+
+def _cloudpickle_worker(
+    result_queue: multiprocessing.Queue,
+    tool_fn_bytes: bytes,
+    args: dict[str, Any],
+    max_memory_mb: int | None,
+    max_cpu_seconds: float | None,
+) -> None:
+    """The child process's entire body for the cloudpickle fallback path
+    (closures/lambdas). Also module-level and picklable-by-reference
+    itself — only `tool_fn_bytes` (plain `bytes`, always
+    stdlib-picklable) needs cloudpickle at all, and only INSIDE this
+    function, to reconstruct the real callable before running it."""
+    import cloudpickle
+
+    try:
+        tool_fn = cloudpickle.loads(tool_fn_bytes)
+    except Exception as exc:
+        # Reconstructing tool_fn itself failed — an infra problem (e.g.
+        # a cloudpickle version mismatch), not the tool's own doing, so
+        # tagged distinctly, same reasoning as "limit_error" above.
+        result_queue.put(("deserialize_error", exc))
+        return
+    _run_and_report(result_queue, tool_fn, args, max_memory_mb, max_cpu_seconds)
 
 
 def run_isolated(
@@ -125,12 +214,31 @@ def run_isolated(
     subprocess, is returned as-is (it must itself be picklable to survive
     the trip back — an exotic custom exception holding unpicklable state
     is the one case this can't faithfully reproduce).
+
+    Picklability (Phase 5): tries the fast, dependency-free stdlib-pickle
+    path first (`_worker`, `tool_fn` by reference); if `tool_fn` isn't
+    stdlib-picklable (a closure or lambda), falls back to serializing it
+    with cloudpickle in THIS process and dispatching to
+    `_cloudpickle_worker` instead — only reachable at all if
+    `check_picklable` already confirmed at construction time that one of
+    the two paths works, so `cloudpickle` being missing here would only
+    happen if it was uninstalled between construction and this call.
     """
     ctx = multiprocessing.get_context("spawn")
     result_queue: multiprocessing.Queue = ctx.Queue()
-    process = ctx.Process(
-        target=_worker, args=(result_queue, tool_fn, args, max_memory_mb, max_cpu_seconds)
-    )
+
+    if _stdlib_picklable(tool_fn):
+        process = ctx.Process(
+            target=_worker, args=(result_queue, tool_fn, args, max_memory_mb, max_cpu_seconds)
+        )
+    else:
+        import cloudpickle
+
+        tool_fn_bytes = cloudpickle.dumps(tool_fn)
+        process = ctx.Process(
+            target=_cloudpickle_worker,
+            args=(result_queue, tool_fn_bytes, args, max_memory_mb, max_cpu_seconds),
+        )
 
     try:
         process.start()
@@ -171,5 +279,10 @@ def run_isolated(
             f"max_cpu_seconds={max_cpu_seconds}) on this platform: {payload}. "
             f"Resource caps are best-effort — the OS/kernel ultimately decides "
             f"whether a given limit is honorable at all."
+        )
+    if status == "deserialize_error":
+        return None, IsolationError(
+            f"could not reconstruct tool_fn inside the isolated subprocess via "
+            f"cloudpickle: {payload}"
         )
     return None, payload  # status == "error": the tool's own exception, as-is

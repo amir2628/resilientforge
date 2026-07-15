@@ -3,6 +3,8 @@ CRUD, and GuardManager's promotion/revocation/describe lifecycle."""
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from resilientforge.oracle import Oracle
@@ -175,6 +177,75 @@ def test_record_application_counter_math(guards):
     assert reloaded_again.times_applied == 2
     assert reloaded_again.times_succeeded == 1
     assert reloaded_again.success_rate == 0.5
+
+
+# -- prune (Phase 5, mirrors RecipeManager.prune) --------------------------------
+
+
+def test_prune_removes_unreliable_guards_below_success_rate_floor(guards):
+    good = guards.promote(tool_name="t", argument="good", kind="transform",
+                           transform="coerce_int", source_signature="sig-a")
+    bad = guards.promote(tool_name="t", argument="bad", kind="transform",
+                          transform="coerce_int", source_signature="sig-b")
+    guards.record_application([good], succeeded=True)
+    guards.record_application([bad], succeeded=True)
+    guards.record_application([bad], succeeded=False)
+    guards.record_application([bad], succeeded=False)  # bad: 1/3 = 0.33
+
+    pruned = guards.prune(min_success_rate=0.5)
+
+    assert pruned == [("t", "bad", "transform")]
+    assert guards.get("t", "bad", "transform") is None
+    assert guards.get("t", "good", "transform") is not None
+
+
+def test_prune_respects_min_times_applied_before_judging_reliability(guards):
+    guard = guards.promote(tool_name="t", argument="x", kind="transform",
+                            transform="coerce_int", source_signature="sig-a")
+    guards.record_application([guard], succeeded=True)
+
+    pruned = guards.prune(min_success_rate=0.9, min_times_applied=5)
+
+    assert pruned == []
+
+
+def test_prune_removes_stale_guards_by_age(guards, oracle):
+    old_time = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
+    oracle.upsert_guard(
+        GuardRow(
+            tool_name="t", argument="old", kind="transform", transform="coerce_int",
+            source_signature="sig-a", created_at=old_time, last_applied=old_time,
+            times_applied=5, times_succeeded=5, success_rate=1.0,
+        )
+    )
+    fresh = guards.promote(tool_name="t", argument="fresh", kind="transform",
+                            transform="coerce_int", source_signature="sig-b")
+    guards.record_application([fresh], succeeded=True)
+
+    pruned = guards.prune(max_age_days=30)
+
+    assert pruned == [("t", "old", "transform")]
+    assert guards.get("t", "fresh", "transform") is not None
+
+
+def test_prune_never_treats_a_never_applied_guard_as_stale(guards):
+    # last_applied is None until a guard actually fires — pruning by age
+    # must not treat "never used yet" as "very stale".
+    guards.promote(tool_name="t", argument="x", kind="transform",
+                    transform="coerce_int", source_signature="sig-a")
+
+    assert guards.prune(max_age_days=1) == []
+
+
+def test_prune_dry_run_reports_without_deleting(guards):
+    guard = guards.promote(tool_name="t", argument="x", kind="transform",
+                            transform="coerce_int", source_signature="sig-a")
+    guards.record_application([guard], succeeded=False)
+
+    pruned = guards.prune(min_success_rate=0.5, dry_run=True)
+
+    assert pruned == [("t", "x", "transform")]
+    assert guards.get("t", "x", "transform") is not None  # still there — dry run didn't delete
 
 
 # -- describe --------------------------------------------------------------------

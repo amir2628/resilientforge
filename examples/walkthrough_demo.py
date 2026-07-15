@@ -7,11 +7,14 @@ Run: python examples/walkthrough_demo.py
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
+import sys
 from pathlib import Path
 
 from resilientforge import wrap
+from resilientforge.telemetry import LoggingMetricsHook
 
 ORACLE_PATH = Path(__file__).parent / ".resilientforge_walkthrough"
 
@@ -86,8 +89,19 @@ def main() -> None:
 
     # -- PART 1: wrap it, same bad input, watch it recover -------------------
     print_header("PART 1 — now wrap the SAME tool with ResilientForge")
-    print(f"Local memory (database) will be created at: {ORACLE_PATH}\n")
-    wrapped = wrap(create_event, reflect=ask_ai_for_a_fix, oracle_path=ORACLE_PATH)
+    print(f"Local memory (database) will be created at: {ORACLE_PATH}")
+    print("Also watch for '[metrics]' lines below — real-time observability")
+    print("events (Phase 5), not just the database written after the fact.\n")
+    # stdout, not logging's default stderr — so these lines interleave
+    # correctly with the print() narration around them either in a
+    # terminal or when piped/redirected.
+    logging.basicConfig(level=logging.INFO, format="  [metrics] %(message)s", stream=sys.stdout)
+    wrapped = wrap(
+        create_event,
+        reflect=ask_ai_for_a_fix,
+        oracle_path=ORACLE_PATH,
+        metrics=LoggingMetricsHook(),
+    )
 
     print("Call #1: agent tries to book 'next Friday' again (same bad input as Part 0)")
     result = wrapped.invoke(date="next Friday", title="Team Meeting")

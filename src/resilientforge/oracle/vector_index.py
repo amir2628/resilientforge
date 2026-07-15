@@ -10,11 +10,15 @@ Embedding function note: chromadb's *default* embedding function downloads
 an onnx model from the network on first use. That breaks the "fast, no
 network" unit-test tier and offline installs, so
 `ChromaVectorIndex` defaults to `_HashingEmbeddingFunction`, a deterministic,
-offline bag-of-words embedder — good enough for matching near-identical
-normalized signatures, but weak on true semantic similarity. This is a
-placeholder: swap in a real embedding model (local or hosted) behind this
-same interface once tuning match quality against the failure-injection
-suite calls for it.
+offline bag-of-words embedder — real weaknesses on same-tool,
+different-root-cause pairs, measured (not assumed) in
+`tests/unit/test_embedder_quality.py`. `embedding_function` is
+injectable specifically so it CAN be swapped — `oracle/
+semantic_embedding.py` (Phase 5) is one such swap, a genuinely-semantic
+embedder behind a heavy optional `semantic` extra; see that module's
+docstring and `docs/architecture.md`'s "Embedder quality" section for
+why "swap in a fancier one" turned out to be more nuanced than it
+sounds once actually measured.
 """
 
 from __future__ import annotations

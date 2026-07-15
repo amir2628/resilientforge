@@ -111,6 +111,41 @@ class Oracle:
             metadata={"tool_name": recipe.tool_name},
         )
 
+    def record_recipe_success(
+        self,
+        *,
+        signature: str,
+        tool_name: str,
+        fix_detail: dict[str, Any],
+        root_cause: str | None,
+        fix_strategy: str | None,
+        now: str,
+    ) -> RecipeRow:
+        """Atomic create-or-increment (Phase 5) — see
+        `SQLiteStore.record_recipe_success`'s docstring for why this
+        exists instead of a Python-level read-modify-write. Re-indexes
+        into the vector store afterward, same as `upsert_recipe` always
+        has — this is the recipe-counter-update path `RecipeManager.
+        record_success` now goes through instead of `upsert_recipe`."""
+        row = self.store.record_recipe_success(
+            signature=signature, tool_name=tool_name, fix_detail=fix_detail,
+            root_cause=root_cause, fix_strategy=fix_strategy, now=now,
+        )
+        self.vector_index.add(id=row.signature, text=row.signature, metadata={"tool_name": row.tool_name})
+        return row
+
+    def record_recipe_fast_path_failure(self, signature: str, now: str) -> RecipeRow | None:
+        """Atomic increment (Phase 5) — see `SQLiteStore.
+        record_recipe_fast_path_failure`'s docstring. Re-indexes into
+        the vector store afterward for the same reason
+        `record_recipe_success` above does (matches `upsert_recipe`'s
+        existing always-reindex behavior, even though the signature
+        itself never changes here)."""
+        row = self.store.record_recipe_fast_path_failure(signature, now)
+        if row is not None:
+            self.vector_index.add(id=row.signature, text=row.signature, metadata={"tool_name": row.tool_name})
+        return row
+
     def get_recipe(self, signature: str) -> RecipeRow | None:
         return self.store.get_recipe(signature)
 
@@ -132,6 +167,17 @@ class Oracle:
 
     def upsert_guard(self, guard: GuardRow) -> None:
         self.store.upsert_guard(guard)
+
+    def record_guard_application(
+        self, tool_name: str, argument: str, kind: str, *, succeeded: bool, now: str
+    ) -> GuardRow | None:
+        """Atomic increment (Phase 5) — see `SQLiteStore.
+        record_guard_application`'s docstring. No vector-index
+        interaction, matching `upsert_guard`'s own behavior (guards are
+        deliberately never indexed — see the module note above)."""
+        return self.store.record_guard_application(
+            tool_name, argument, kind, succeeded=succeeded, now=now
+        )
 
     def get_guard(self, tool_name: str, argument: str, kind: str) -> GuardRow | None:
         return self.store.get_guard(tool_name, argument, kind)

@@ -6,7 +6,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-15
+
 ### Added
+- Phase 5 complete: production-hardening pass across 8 tracks, prompted
+  by a direct "is this production ready?" assessment after Phase 4 that
+  identified 8 concrete gaps. Two real bugs were found and fixed by
+  actually exercising the new tests, not by inspection:
+  `oracle/store.py` moved from one shared `sqlite3.Connection` to
+  thread-local connections (a shared connection, even with
+  `check_same_thread=False`, raised `sqlite3.InterfaceError` under real
+  concurrent access) and from Python-level read-modify-write counter
+  updates to single atomic SQL statements
+  (`record_recipe_success`/`record_recipe_fast_path_failure`/
+  `record_guard_application`) after concurrent load testing reliably
+  reproduced lost updates (400 concurrent calls landing at 3, then 17,
+  before the fix).
+  - **Live validation** (`tests/live/`): `create_anthropic_reflect()`'s
+    real-client construction path, previously only unit-tested against
+    fakes across 4 phases, actually exercised — plus a new
+    `create_local_reflect` (`integrations/raw_tool_loop.py`), backed by
+    any local OpenAI-compatible endpoint (developed and verified against
+    Ollama), added after a real Anthropic account turned out to have
+    insufficient API credits mid-verification. Uses a hand-flattened
+    tool schema (`_flat_fix_schema`), not `Fix.model_json_schema()`
+    directly — empirically, smaller/local models' tool-calling was
+    confused by the raw schema's `$defs`/`$ref` indirection in a way
+    Claude never was.
+  - **Staleness safeguards**: `GuardManager.prune()` (mirrors
+    `RecipeManager.prune` exactly — guards had no equivalent before);
+    automatic guard demotion (`guard_demotion_min_occurrences`/
+    `guard_demotion_max_failure_rate`, always on — a guard that's fired
+    enough times with too high a failure rate auto-revokes via the
+    existing sticky `revoke()`); opt-in `recipe_min_success_rate` +
+    `recipe_reliability_min_occurrences` (skip a recipe that's stopped
+    working instead of always trying it first).
+  - **Schema migration**: `oracle.db` now stamps `PRAGMA user_version`
+    and runs an ordered migration list on open — every pre-Phase-5
+    database (implicitly `user_version=0`) migrates cleanly; opening a
+    newer database than the code understands raises clearly instead of
+    silently misreading it.
+  - **Concurrency**: `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout`
+    (measured ~4.4x throughput and much lower tail latency under write
+    contention vs. the pre-Phase-5 default journal mode — real numbers
+    in `docs/architecture.md`), plus the connection/counter-atomicity
+    fixes above. New `tests/load/test_concurrency.py`
+    (`@pytest.mark.load`, opt-in).
+  - **Observability** (`telemetry/metrics.py`, previously an empty
+    stub): `wrap(..., metrics=...)`, a vendor-neutral `MetricsHook`
+    (same injected-callable pattern as `reflect`) emitting `call_result`/
+    `recovery_resolved`/`guard_fired`/`guard_promoted`/`guard_revoked`
+    events live as `invoke()` runs — distinct from the dashboard, which
+    shows persisted state after the fact. `LoggingMetricsHook` is a
+    zero-dependency stdlib-`logging` reference implementation.
+  - **Isolation picklability**: new optional `isolation` extra adds
+    `cloudpickle` as a fallback when stdlib `pickle` can't serialize
+    `tool_fn` (closures/lambdas) — tries stdlib pickle first (unchanged
+    fast path), only serializes via cloudpickle (bytes crossing the
+    actual process boundary, never cloudpickle objects themselves) when
+    that fails and the extra is installed. Found and documented a real,
+    non-obvious consequence: mutable state a closure captures does NOT
+    persist across separate isolated calls, since each call gets an
+    independent subprocess.
+  - **Embedder quality**: `tests/unit/test_embedder_quality.py` runs a
+    labeled, realistic benchmark against the default hashing embedder
+    (recall 1.00, precision ~0.55) and a new optional `semantic` extra
+    (`oracle/semantic_embedding.py`'s `SentenceTransformerEmbeddingFunction`,
+    ~1GB installed) — reported honestly: the semantic embedder did
+    **not** outperform the free default on this benchmark (precision
+    ~0.50, slightly worse), a genuine, unflattering result kept exactly
+    as measured rather than tuned to look better.
+  - Version bumped `0.1.0.dev0` → `0.2.0`, classifier `Pre-Alpha` →
+    `Alpha` — a modest, evidence-based bump, not a claim of
+    battle-tested production maturity this project doesn't have
+    evidence for yet. New dormant `.github/workflows/release.yml`
+    (tag-triggered build; publishes only if a `PYPI_API_TOKEN` secret is
+    configured).
 - Phase 4 (partial) complete: sandboxed isolation and a local dashboard —
   oracle federation was explicitly deferred (the spec itself hedges it as
   "optional" with zero elaboration).

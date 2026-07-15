@@ -302,6 +302,44 @@ def guards_revoke(
         typer.echo(f"  - {guard.tool_name}({guard.argument}) [{guard.kind}]")
 
 
+@guards_app.command("prune")
+def guards_prune(
+    oracle_path: str = _ORACLE_PATH_OPTION,
+    min_success_rate: float = typer.Option(
+        0.0, "--min-success-rate", help="Prune guards below this success rate."
+    ),
+    min_times_applied: int = typer.Option(
+        1, "--min-times-applied", help="Only judge success rate once applied at least this many times."
+    ),
+    max_age_days: float = typer.Option(
+        None, "--max-age-days", help="Prune guards not applied within this many days."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be pruned without deleting anything."
+    ),
+) -> None:
+    """Prune unreliable and/or stale guards from the oracle (Phase 5).
+
+    Distinct from `guards revoke`: revoke is a sticky, explicit "no" you
+    choose for one guard; prune is unattended maintenance removing
+    whichever guards have quietly become unreliable or stale, mirroring
+    the top-level `prune` command's exact criteria for recipes."""
+    with Oracle(oracle_path) as oracle:
+        pruned = GuardManager(oracle).prune(
+            min_success_rate=min_success_rate,
+            min_times_applied=min_times_applied,
+            max_age_days=max_age_days,
+            dry_run=dry_run,
+        )
+    verb = "Would prune" if dry_run else "Pruned"
+    if not pruned:
+        typer.echo(f"{verb} 0 guards.")
+        return
+    typer.echo(f"{verb} {len(pruned)} guard(s):")
+    for tool_name, argument, kind in pruned:
+        typer.echo(f"  - {tool_name}({argument}) [{kind}]")
+
+
 @guards_app.command("describe")
 def guards_describe(
     oracle_path: str = _ORACLE_PATH_OPTION,

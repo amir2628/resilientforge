@@ -1,10 +1,13 @@
 """Integration tests for integrations/raw_tool_loop.py: the Anthropic
 tool_use adapter, the OpenAI function-calling shim (including the
-malformed-JSON-args recovery path), and the Anthropic-backed reflect
-factory — all against fakes/doubles, no real network call."""
+malformed-JSON-args recovery path), and the Anthropic-backed and
+local-model-backed reflect factories — all against fakes/doubles, no
+real network call. (Real-network verification of both lives under
+tests/live/, opt-in via @pytest.mark.live.)"""
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -13,6 +16,7 @@ import pytest
 from resilientforge.core.recovery import FailureContext, Fix
 from resilientforge.integrations.raw_tool_loop import (
     create_anthropic_reflect,
+    create_local_reflect,
     execute_anthropic_tool_use,
     execute_openai_tool_call,
     make_json_arg_parser,
@@ -413,6 +417,106 @@ def test_create_anthropic_reflect_includes_previous_attempts_in_prompt():
 def test_create_anthropic_reflect_raises_if_no_tool_use_in_response():
     client = _FakeAnthropicClient([_FakeContentBlock("text", None)])
     reflect = create_anthropic_reflect(client=client)
+
+    with pytest.raises(RuntimeError):
+        reflect(FailureContext(tool_name="t", args={}))
+
+
+# -- create_local_reflect (fake OpenAI-compatible client, no network) -----------
+#
+# Named distinctly from _FakeFunction/_FakeOpenAIToolCall above (the
+# execute_openai_tool_call fakes) even though both stand in for pieces of
+# the OpenAI SDK — those model a tool_call from a chat completion's
+# *request* to this library; these model a chat *completion response*
+# object itself (client.chat.completions.create(...).choices[0].message.
+# tool_calls), a different shape entirely. Reusing the same class names
+# here silently shadowed the earlier ones and broke their tests — found
+# by actually running the full suite after adding this section, not by
+# inspection; kept as a comment so the naming stays deliberate going forward.
+
+
+class _FakeCompletionFunction:
+    def __init__(self, name, arguments_json):
+        self.name = name
+        self.arguments = arguments_json
+
+
+class _FakeCompletionToolCall:
+    def __init__(self, name, arguments_json):
+        self.function = _FakeCompletionFunction(name, arguments_json)
+
+
+class _FakeCompletionMessage:
+    def __init__(self, tool_calls):
+        self.tool_calls = tool_calls
+
+
+class _FakeCompletionChoice:
+    def __init__(self, message):
+        self.message = message
+
+
+class _FakeCompletionResponse:
+    def __init__(self, choices):
+        self.choices = choices
+
+
+class _FakeChatCompletions:
+    def __init__(self, tool_calls):
+        self.tool_calls = tool_calls
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return _FakeCompletionResponse([_FakeCompletionChoice(_FakeCompletionMessage(self.tool_calls))])
+
+
+class _FakeChat:
+    def __init__(self, tool_calls):
+        self.completions = _FakeChatCompletions(tool_calls)
+
+
+class _FakeOpenAICompatibleClient:
+    def __init__(self, tool_calls):
+        self.chat = _FakeChat(tool_calls)
+
+
+def test_create_local_reflect_builds_request_and_parses_response():
+    fix_input = {
+        "strategy": "reformat_argument",
+        "transforms": [{"argument": "date", "transform": "parse_relative_date_to_iso"}],
+    }
+    client = _FakeOpenAICompatibleClient(
+        [_FakeCompletionToolCall("propose_fix", json.dumps(fix_input))]
+    )
+    reflect = create_local_reflect(client=client, model="qwen2.5:7b")
+
+    context = FailureContext(
+        tool_name="create_event",
+        args={"date": "next Friday"},
+        error_type="ValueError",
+        error_message="could not parse date 'next Friday'",
+    )
+    raw = reflect(context)
+
+    assert raw == fix_input
+    fix = Fix.model_validate(raw)  # must be directly usable by generate_fix
+    assert fix.strategy == "reformat_argument"
+
+    call = client.chat.completions.calls[0]
+    assert call["model"] == "qwen2.5:7b"
+    assert call["temperature"] == 0
+    assert call["tool_choice"] == {"type": "function", "function": {"name": "propose_fix"}}
+    assert call["tools"][0]["function"]["name"] == "propose_fix"
+    # the flattened schema, not Fix.model_json_schema() — no $defs/$ref
+    assert "$defs" not in call["tools"][0]["function"]["parameters"]
+    assert "create_event" in call["messages"][0]["content"]
+    assert "next Friday" in call["messages"][0]["content"]
+
+
+def test_create_local_reflect_raises_if_no_tool_call_in_response():
+    client = _FakeOpenAICompatibleClient([])
+    reflect = create_local_reflect(client=client)
 
     with pytest.raises(RuntimeError):
         reflect(FailureContext(tool_name="t", args={}))

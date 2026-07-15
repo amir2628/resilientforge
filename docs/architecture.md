@@ -14,20 +14,23 @@ src/resilientforge/
 │   ├── signature.py     # failure normalization/templating (the crux — see below)
 │   ├── invariants.py    # Invariant: deterministic + LLM-judged checks
 │   ├── recovery.py      # Fix generation (reflection) + application + transforms
-│   ├── isolation.py     # Phase 4: subprocess-based timeout/crash/resource isolation
-│   └── engine.py        # wrap() — ties everything into the recovery loop
+│   ├── isolation.py     # Phase 4: subprocess-based timeout/crash/resource isolation; Phase 5: cloudpickle fallback
+│   └── engine.py        # wrap() — ties everything into the recovery loop; Phase 5: guard demotion, metrics emission
 ├── oracle/
-│   ├── store.py          # SQLite: failures + recipes + guards tables (raw CRUD)
-│   ├── vector_index.py   # VectorIndex interface + chromadb implementation
-│   ├── recipes.py        # Recipe domain model + RecipeManager (times_applied, success_rate, prune)
-│   ├── guards.py         # Phase 2: StandingGuard + GuardManager (promotion, revoke, describe)
-│   └── __init__.py       # Oracle — the single facade over store.py + vector_index.py
+│   ├── store.py               # SQLite: failures + recipes + guards tables (raw CRUD); Phase 5: schema migration + atomic counter updates
+│   ├── vector_index.py        # VectorIndex interface + chromadb implementation
+│   ├── semantic_embedding.py  # Phase 5: optional sentence-transformers embedder (`semantic` extra)
+│   ├── recipes.py             # Recipe domain model + RecipeManager (times_applied, success_rate, prune)
+│   ├── guards.py              # Phase 2: StandingGuard + GuardManager (promotion, revoke, describe); Phase 5: prune
+│   └── __init__.py            # Oracle — the single facade over store.py + vector_index.py
 ├── integrations/
-│   ├── raw_tool_loop.py     # Anthropic tool_use + OpenAI function-calling shim
+│   ├── raw_tool_loop.py     # Anthropic tool_use + OpenAI function-calling shim; Phase 5: create_local_reflect (any OpenAI-compatible endpoint)
 │   └── langgraph_adapter.py # LangGraph ToolNode via wrap_tool_call
 ├── dashboard/             # Phase 4: read-only local web dashboard (optional `dashboard` extra)
 │   ├── app.py             # create_app() — FastAPI, GET-only endpoints
 │   └── _html.py           # the entire front end, one inlined string
+├── telemetry/             # Phase 5: live observability, injected callable (optional `metrics=` param)
+│   └── metrics.py         # MetricEvent, MetricsHook, LoggingMetricsHook
 └── cli/main.py           # list / inspect / prune / stats / dashboard / guards *
 ```
 
@@ -175,6 +178,38 @@ must all be *prevented* (zero retries) — not merely recovered from — to
 prove the guard generalizes rather than replaying a cached answer. See
 the `prevention_rate` column in the failure-injection report.
 
+**Staleness safeguards (Phase 5)**: promotion always had a mirror image
+missing — nothing ever un-promoted a guard whose fix stopped working, or
+recognized a recipe that's quietly become unreliable.
+`GuardManager.prune()` (`oracle/guards.py`) now mirrors
+`RecipeManager.prune` exactly (age via `last_applied`, success-rate
+floor, `dry_run`) — `resilientforge guards prune` — for unattended
+maintenance, distinct from `revoke()`'s sticky, explicit "no." More
+important: **automatic guard demotion** is always on (no toggle) — once
+a guard has fired at least `guard_demotion_min_occurrences` times (3, by
+default) and its failure rate exceeds `guard_demotion_max_failure_rate`
+(0.5, by default), `WrappedAgent._maybe_demote_guards` auto-revokes it
+via the exact same sticky `revoke()` a human would use. This can never
+turn a passing scenario into a failing one — it only ever acts once a
+guard's real track record has actually gone bad, and a revoked guard
+just means recovery reverts to Phase 1's reactive per-call fixing,
+exactly as safe as if the guard had never existed. Modeled directly on a
+real production concern: a tool's underlying behavior changing after a
+fix was already learned for it (`test_guard_auto_demotes_after_its_
+success_rate_drops_below_threshold` in `tests/integration/test_engine.py`
+simulates exactly this — a promoted patch guard whose value stops being
+valid once the tool's accepted values change underneath it).
+
+A parallel, **opt-in** `recipe_min_success_rate` (default `None` =
+today's unconditional Phase 1-4 behavior) does the same for the recipe
+fast path itself: once set, a recipe whose success rate has fallen below
+the floor (after `recipe_reliability_min_occurrences` applications, so
+one early failure can't disqualify a brand-new recipe) is skipped as a
+candidate, falling through to reflection instead of proposing a fix
+that's stopped working. Kept opt-in rather than defaulting to enabled
+like guard demotion, since it changes the core Phase 1 fast-path lookup
+order itself, not just a proactive optimization layered on top of it.
+
 ## Speculative branching (Phase 3) — multiple candidates, one safety rule
 
 Phase 1/2's recovery loop always considers exactly one `Fix` per attempt.
@@ -306,20 +341,48 @@ not be duplicated into the child. A fresh subprocess per call, never
 pooled or reused — one crashed or resource-limited call can never poison
 a later one.
 
-**The picklability requirement is real, not a corner case.** `isolate=
-True` requires pickling `tool_fn` across the process boundary, so a
-locally-defined closure or lambda will not work — only a module-level
-function or a bound method on a picklable object. This is checked
-*eagerly*, at `WrappedAgent` construction (`check_picklable`), not on
-the first call — fail fast with a clear message, not a cryptic pickle
-traceback three calls in. It's also why `integrations/langgraph_adapter.py`
-deliberately does **not** expose `isolate` at all: that adapter builds a
-fresh closure over LangGraph's own live `execute` callback for every
-tool call, and `execute` is bound to in-process graph state that
-genuinely cannot be pickled — a structural incompatibility, not an
-oversight. `integrations/raw_tool_loop.py`'s `wrap_tools()` has no such
-problem, since the wrapped `tool_fn` there is the caller's own plain
-function, never a closure this codebase manufactures.
+**The picklability requirement is real, not a corner case — and Phase 5
+narrows it, without removing it.** `isolate=True` requires pickling
+`tool_fn` across the process boundary. Stdlib `pickle` (the default,
+dependency-free path) can't serialize a locally-defined closure or
+lambda — only a module-level function or a bound method on a picklable
+object. `check_picklable` runs *eagerly*, at `WrappedAgent` construction,
+not on the first call — fail fast with a clear message, not a cryptic
+pickle traceback three calls in.
+
+**`cloudpickle` (optional `isolation` extra — `pip install
+resilientforge[isolation]`) closes most of that gap**: it CAN serialize
+closures and lambdas, so `check_picklable`/`run_isolated`
+(`core/isolation.py`) try stdlib pickle first (the fast path, unchanged)
+and fall back to cloudpickle only when that fails and the extra is
+installed — `tool_fn` is serialized to bytes in the parent, only bytes
+cross the actual `multiprocessing.Process(args=...)` boundary (always
+stdlib-picklable trivially), and a second, fixed, by-reference-picklable
+worker (`_cloudpickle_worker`) reconstructs the real callable with
+`cloudpickle.loads` inside the child — `multiprocessing` itself never
+needs to know cloudpickle exists.
+
+**A real, non-obvious limitation found while testing this, not a
+hypothetical caveat**: mutable state a closure captures does NOT persist
+across separate isolated calls. Every call re-serializes `tool_fn` fresh
+from whatever the parent process currently holds; a call's mutations
+happen only inside that call's own short-lived subprocess and are never
+communicated back. A closure-based counter or cache will NOT accumulate
+across calls the way it would for an ordinary in-process closure —
+`isolate=True` tools should be effectively stateless, or rely on
+external state (a file, a database, an API), not in-process Python
+state, for anything that's supposed to change across occurrences.
+
+It's also why `integrations/langgraph_adapter.py` deliberately does
+**not** expose `isolate` at all, cloudpickle or not: that adapter builds
+a fresh closure over LangGraph's own live `execute` callback for every
+tool call, and `execute` is bound to in-process graph state (a
+checkpointer, a live tool registry) that genuinely cannot be serialized
+by *any* pickler — a structural incompatibility, not a gap cloudpickle
+can close. `integrations/raw_tool_loop.py`'s `wrap_tools()` has no such
+problem, since the wrapped `tool_fn` there is the caller's own function
+or closure, never one this codebase manufactures around live framework
+state.
 
 **Resource caps are POSIX-only and best-effort, confirmed empirically,
 not just claimed.** `max_memory_mb`/`max_cpu_seconds` apply
@@ -415,8 +478,121 @@ offline hashing (bag-of-words) embedder instead — good enough for
 matching near-identical *normalized* signatures (which is what actually
 reaches the vector index, after `core/signature.py` has already done the
 real work), but not true semantic embedding. It's swappable behind the
-same `VectorIndex` interface; revisit if match quality against the
-failure-injection suite calls for it.
+same `VectorIndex` interface — Phase 5 exercises exactly this
+swappability with an optional, genuinely-semantic embedder; see
+"Embedder quality" below.
+
+**Schema versioning (Phase 5)**: `oracle.db` now stamps `PRAGMA
+user_version` (`_CURRENT_SCHEMA_VERSION` in `store.py`) and runs an
+ordered `_MIGRATIONS` list on open. Every oracle.db from Phases 1-4 has
+`user_version == 0` (SQLite's own default — nothing ever stamped one
+before now); this is treated as "implicitly today's schema, version
+tracking begins now," not "unknown/incompatible," since the table shapes
+themselves haven't changed since Phase 1 — the 0→1 migration is
+genuinely a no-op besides the version stamp itself, which is the honest
+truth of what changed, not a fabricated migration. Opening a *newer*
+database than the installed code understands raises a clear
+`RuntimeError` rather than silently misreading it. Real future schema
+changes get their own migration function appended to the list, each one
+able to assume the Phase-1 baseline tables already exist.
+`tests/unit/test_store_migrations.py` proves the mechanism against a
+simulated pre-Phase-5 database (built as a raw sqlite3 file with
+`user_version` left at 0, not just a fresh one), not only a synthetic
+happy path.
+
+**Concurrency (Phase 5): two real, distinct bugs found by actually
+load-testing this, neither hypothetical.**
+
+1. *Connection safety.* A single shared `sqlite3.Connection`, even
+   opened with `check_same_thread=False`, is not safe to use from
+   multiple threads at once — the first real concurrent run of
+   `tests/load/test_concurrency.py` raised `sqlite3.InterfaceError: bad
+   parameter or other API misuse` immediately.
+   `check_same_thread=False` only disables Python's *own* same-thread
+   check; it doesn't make the underlying connection object thread-safe.
+   Fixed with thread-local connections (`SQLiteStore._new_connection`/
+   `_ensure_connection`, one `sqlite3.Connection` per thread, all to the
+   same file) — exactly what WAL mode exists to support: multiple
+   connections to one database file, concurrent readers alongside a
+   writer. `SQLiteStore.close()` can now only close the *calling*
+   thread's connection, a documented limitation, not an oversight — safe
+   because WAL commits are already durable on disk, nothing is lost by
+   another thread's connection closing later (at process exit) instead
+   of explicitly.
+2. *Lost updates.* Fixing (1) surfaced a second, deeper bug: recipe and
+   guard counters (`times_applied`/`times_succeeded`/`success_rate`)
+   were updated via read-in-Python, compute-in-Python, write-back —
+   classic read-modify-write, racy the instant two threads increment the
+   same row concurrently (confirmed: 400 concurrent calls landed at 3,
+   then 17, before the fix — not "unlikely," reliably reproducible).
+   Fixed by moving the entire increment into ONE atomic SQL statement —
+   `SQLiteStore.record_recipe_success`/`record_recipe_fast_path_failure`/
+   `record_guard_application`, each computing the new counters directly
+   from `recipes.times_applied`/`guards.times_applied` (the current row,
+   inside the same atomic `UPDATE`/`INSERT ... ON CONFLICT DO UPDATE ...
+   RETURNING`), never from a value fetched by an earlier, separate
+   `SELECT`. `RecipeManager.record_success`/`record_fast_path_failure`
+   and `GuardManager.record_application` now delegate to these instead
+   of computing new values in Python.
+
+**`PRAGMA journal_mode = WAL` + `PRAGMA busy_timeout = 5000`** are now
+set on every connection. Measured directly (`tests/load/
+test_concurrency.py`, 16 threads × 25 calls, all contending on the same
+row — the worst case, not a favorable one) — both are equally *correct*
+after the atomic-update fix above (WAL doesn't fix the race; the atomic
+SQL does), but WAL is meaningfully faster under this contention pattern:
+
+| journal_mode | throughput | p50 latency | p99 latency |
+|---|---|---|---|
+| `DELETE` (SQLite's pre-Phase-5 default) | 577 calls/sec | 0.2ms | 371.2ms |
+| `WAL` | 2524 calls/sec | 0.1ms | 115.8ms |
+
+(Numbers from one run on one machine — reproduce with `pytest -m load -v
+-s tests/load/test_concurrency.py`, hardware-dependent by nature, same
+"real numbers, not marketing copy" discipline as the failure-injection
+report; not asserted as a fixed threshold in the test itself for exactly
+that reason.)
+
+## Embedder quality (Phase 5) — measured, including a genuine surprise
+
+`tests/unit/test_embedder_quality.py` runs a labeled, realistic set of
+signature pairs (varied tool domains — e-commerce, calendar, messaging,
+file ops, payments, user accounts — each pair marked "should match"
+(same failure, different error-message wording) or "should not match"
+(a different failure on the same tool, or a different tool entirely))
+through the real `ChromaVectorIndex` end-to-end, at the same
+`similarity_threshold=0.85` `wrap()` defaults to, and reports honest
+precision/recall — not a marketing number, an actually-computed one:
+
+| embedder | recall | precision |
+|---|---|---|
+| hashing (default, `_HashingEmbeddingFunction`) | 1.00 | ~0.55 |
+| semantic (`semantic` extra, `SentenceTransformerEmbeddingFunction`) | 1.00 | ~0.50 |
+
+The hashing embedder's real weakness: bag-of-words similarity is
+dominated by shared structural boilerplate (`"tool:"`, `"args:{"`,
+shared argument names) that appears in *every* signature and doesn't
+discriminate between different failures on the same tool — several
+same-tool, different-root-cause pairs score above threshold.
+
+**The genuine surprise**: `oracle/semantic_embedding.py`'s
+`SentenceTransformerEmbeddingFunction` (`sentence-transformers` +
+`torch`, ~1GB installed — a new optional `semantic` extra, never a base
+or `dev` dependency) does **not** outperform the free default on this
+benchmark — precision is actually slightly *worse*. Its false positives
+include pairs that ARE semantically/topically related ("card declined"
+vs "insufficient funds" — both genuinely about payment failure) but need
+different fixes: general-purpose semantic closeness isn't the same
+thing as "needs the same corrective action," which is what recipe
+matching actually needs. This is reported exactly as measured, not
+tuned after the fact to look better — the honest conclusion is "measure
+against your own signatures before paying ~1GB for a fancier-sounding
+technique," not "always use the semantic one." `ChromaVectorIndex`'s
+`embedding_function` parameter already made this fully pluggable before
+Phase 5 touched anything — `semantic_embedding.py` needed zero changes
+to `wrap()`/`Oracle`/`core/engine.py`, only a new class satisfying the
+same `EmbeddingFunction` protocol `_HashingEmbeddingFunction` already
+does.
 
 ## Signature normalization (`core/signature.py`) — the crux
 
@@ -472,6 +648,28 @@ tool-specific one).
 - `create_anthropic_reflect`: the concrete default `reflect`. Forces a
   synthetic `propose_fix` tool call whose schema is
   `Fix.model_json_schema()`, so the response validates directly.
+- `create_local_reflect` (Phase 5): the same idea, backed by any
+  locally-hosted, OpenAI-compatible chat completions endpoint instead of
+  a paid hosted API — developed and verified against
+  [Ollama](https://ollama.com), no Ollama-specific code involved (works
+  with anything speaking the same protocol). Uses `openai` (already a
+  base dependency) rather than adding a new one. Built while closing the
+  "never validated against a real model" gap: a genuine, real-money
+  Anthropic account turned out to have insufficient API credits mid-way
+  through verification, and this became the actual path used to prove
+  real-model recovery — see `tests/live/test_local_reflect.py`.
+
+  **A real, empirically-found difference from `create_anthropic_reflect`,
+  not a hypothetical one**: it uses a hand-flattened schema
+  (`_flat_fix_schema`), not `Fix.model_json_schema()` directly. Claude
+  follows the raw pydantic schema (with its `$defs`/`$ref` indirection)
+  correctly; a local `qwen2.5:7b` model, tested live via Ollama, did not
+  — it repeatedly invented its own wrapper structure around the intended
+  fields until the schema was flattened. A smaller `qwen2.5:3b` was
+  tried first and was unreliable even with the flattened schema,
+  regardless of prompt clarity — recorded here as a real data point on
+  model-size requirements for this kind of structured tool-calling task,
+  not a universal claim about all small models.
 
 ### LangGraph (`integrations/langgraph_adapter.py`)
 
@@ -522,6 +720,39 @@ and that shape differs by integration, which matters when writing one:
 | LangGraph adapter | whatever `execute()` returns — typically a `ToolMessage`, so check e.g. `result.content`, not a bare value |
 
 See [`writing_invariants.md`](writing_invariants.md) for concrete examples.
+
+## Observability (`telemetry/`, Phase 5)
+
+`wrap(..., metrics=...)` is a live counterpart to the dashboard: the
+dashboard shows the oracle's *persisted* contents after the fact;
+`metrics` is a callable that sees events as `WrappedAgent.invoke()`
+actually runs. Same vendor-neutral, caller-injects-a-callable pattern as
+`reflect`/`judge` — `telemetry/metrics.py` never imports a metrics
+vendor SDK, and this project isn't trying to be a tracing platform (see
+the "differentiation" framing in the spec — usable *alongside* Langfuse/
+Phoenix/LangSmith).
+
+Five event types, deliberately not exhaustive (a known-useful subset,
+widened against real usage rather than speculatively, same discipline
+`TRANSFORM_REGISTRY` follows): `call_result` (one real tool invocation —
+the initial attempt or one recovery attempt, tagged `source=
+"initial"|"recipe"|"reflection"`), `recovery_resolved` (how one
+`invoke()` call that needed recovery ended — `"recovered"|"exhausted"|
+"aborted"`, with `total_attempts`), and `guard_fired`/`guard_promoted`/
+`guard_revoked`. All emission happens through one `WrappedAgent._emit`
+helper (a no-op when `metrics` isn't set — every call site can call it
+unconditionally) from the exact points that already have the right
+context (`_on_attempt_success`/`_on_attempt_failure`, which Phase 3's
+refactor already made the single shared success/failure tail every
+selection path goes through — so metrics can't silently diverge between
+the single-candidate and speculative-branching paths either).
+
+`LoggingMetricsHook` (stdlib `logging`, zero new dependency) is a
+reference implementation, not the intended production backend for
+anyone with real telemetry infrastructure already — configure the
+`resilientforge.metrics` logger the normal stdlib way (handlers,
+formatters, level) to send it wherever logs already go, or write your
+own `MetricsHook` for Prometheus/Datadog/OpenTelemetry/anything else.
 
 ## Testing strategy in practice
 

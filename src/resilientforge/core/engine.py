@@ -19,6 +19,7 @@ import json
 import sys
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -38,6 +39,7 @@ from resilientforge.core.signature import build_signature
 from resilientforge.oracle import Oracle, RecipeRow, ResolutionStatus
 from resilientforge.oracle.guards import GuardManager, StandingGuard
 from resilientforge.oracle.recipes import RecipeManager
+from resilientforge.telemetry.metrics import MetricEvent, MetricsHook
 
 FixSource = Literal["recipe", "reflection"]
 
@@ -140,8 +142,48 @@ class WrappedAgent:
         call_timeout: float | None = None,
         max_memory_mb: int | None = None,
         max_cpu_seconds: float | None = None,
+        guard_demotion_min_occurrences: int = 3,
+        guard_demotion_max_failure_rate: float = 0.5,
+        recipe_min_success_rate: float | None = None,
+        recipe_reliability_min_occurrences: int = 3,
+        metrics: MetricsHook | None = None,
     ) -> None:
         """
+        metrics: MetricsHook | None = None (Phase 5)
+            Optional observability hook — a callable receiving a
+            `MetricEvent` (see `telemetry/metrics.py`) for real tool
+            calls, how a recovery ultimately resolved, and guard fire/
+            promote/revoke events. Vendor-neutral, same
+            caller-injects-a-callable pattern as `reflect` — this stays
+            a no-op unless you provide one.
+
+        guard_demotion_min_occurrences / guard_demotion_max_failure_rate (Phase 5)
+            The reverse of guard promotion: once a guard has fired at
+            least `guard_demotion_min_occurrences` times and its
+            failure rate (`1 - success_rate`) exceeds
+            `guard_demotion_max_failure_rate`, it's auto-revoked via
+            the same sticky `revoke()` a human would use. Always
+            enabled (no separate on/off flag): it only ever acts on a
+            guard whose track record has actually gone bad, so it can
+            never turn a working scenario into a failing one — a guard
+            that's stopped working just stops firing, and recovery
+            reverts to Phase 1's reactive per-call fixing, exactly as
+            safe as if the guard had never existed.
+
+        recipe_min_success_rate / recipe_reliability_min_occurrences (Phase 5)
+            Opt-in (`recipe_min_success_rate` defaults to `None` =
+            today's unconditional behavior — a recipe is always tried
+            first regardless of its track record, exactly as every
+            prior phase did). When set, a recipe whose `success_rate`
+            has fallen below this floor (once it's been applied at
+            least `recipe_reliability_min_occurrences` times) is
+            skipped as a fast-path candidate — falling straight through
+            to reflection instead of proposing a fix that's stopped
+            working. Kept opt-in rather than defaulting to enabled like
+            guard demotion, since this changes the core Phase 1
+            fast-path lookup order itself, not just a proactive
+            optimization on top of it.
+
         side_effect_free: bool = False
             Vouches that `tool_fn` has no problematic real-world effect
             regardless of which arguments it's called with, and is
@@ -216,6 +258,11 @@ class WrappedAgent:
         self.enable_standing_guards = enable_standing_guards
         self.guard_promotion_min_occurrences = guard_promotion_min_occurrences
         self.guard_promotion_min_success_rate = guard_promotion_min_success_rate
+        self.guard_demotion_min_occurrences = guard_demotion_min_occurrences
+        self.guard_demotion_max_failure_rate = guard_demotion_max_failure_rate
+        self.recipe_min_success_rate = recipe_min_success_rate
+        self.recipe_reliability_min_occurrences = recipe_reliability_min_occurrences
+        self.metrics = metrics
         self.num_branches = num_branches
         self.side_effect_free = side_effect_free
         if side_effect_free and num_branches <= 1:
@@ -245,6 +292,21 @@ class WrappedAgent:
         if isolate:
             check_picklable(tool_fn)
 
+    def _emit(self, event_type: str, **fields: Any) -> None:
+        """No-op unless `metrics` was provided — every call site below
+        can unconditionally call this without checking `self.metrics is
+        None` itself."""
+        if self.metrics is None:
+            return
+        self.metrics(
+            MetricEvent(
+                event_type=event_type,
+                tool_name=self.tool_name,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                **fields,
+            )
+        )
+
     # -- the recovery loop -------------------------------------------------
 
     def invoke(self, **kwargs: Any) -> Any:
@@ -256,11 +318,15 @@ class WrappedAgent:
         result, error = self._call(current_args)
         classification = self._classify_failure(result, error)  # may raise InvariantAbortError
         if classification is None:
+            self._emit("call_result", success=True, source="initial")
             if fired_guards:
                 # Prevention, not recovery: a guard changed the
                 # args before the first attempt and that attempt succeeded
                 # outright — no failure was ever recorded for this call.
                 self.guards.record_application(fired_guards, succeeded=True)
+                self._maybe_demote_guards(fired_guards)
+                for guard in fired_guards:
+                    self._emit("guard_fired", argument=guard.argument, kind=guard.kind, success=True)
             return result
         if fired_guards:
             # The guard fired but wasn't sufficient on its own — record the
@@ -268,7 +334,11 @@ class WrappedAgent:
             # below exactly as if no guard had fired (using current_args,
             # which already reflects whatever the guard changed).
             self.guards.record_application(fired_guards, succeeded=False)
+            self._maybe_demote_guards(fired_guards)
+            for guard in fired_guards:
+                self._emit("guard_fired", argument=guard.argument, kind=guard.kind, success=False)
         error_type, error_message = classification
+        self._emit("call_result", success=False, source="initial", error_type=error_type)
         original_error = error
 
         signature = build_signature(
@@ -302,7 +372,7 @@ class WrappedAgent:
                     retry_classification = self._classify_failure(retry_result, retry_error)
 
                     if retry_classification is None:
-                        self._on_attempt_success(signature, fix, failure.id)
+                        self._on_attempt_success(signature, fix, source, failure.id, attempt_number)
                         return retry_result
 
                     retry_error_type, retry_error_message = retry_classification
@@ -324,7 +394,9 @@ class WrappedAgent:
                     candidate, retry_result, retry_error = self._try_best_proxy_ranked(candidates)
                     retry_classification = self._classify_failure(retry_result, retry_error)
                     if retry_classification is None:
-                        self._on_attempt_success(signature, candidate.fix, failure.id)
+                        self._on_attempt_success(
+                            signature, candidate.fix, candidate.source, failure.id, attempt_number
+                        )
                         return retry_result
                     retry_error_type, retry_error_message = retry_classification
                     self._on_attempt_failure(
@@ -340,7 +412,9 @@ class WrappedAgent:
                             f_error_type, f_error_message, attempts,
                         )
                     if winner is not None:
-                        self._on_attempt_success(signature, winner.fix, failure.id)
+                        self._on_attempt_success(
+                            signature, winner.fix, winner.source, failure.id, attempt_number
+                        )
                         return winner_result
                     # Every candidate this round failed for real; carry the
                     # last-tried candidate's applied args forward, mirroring
@@ -348,9 +422,11 @@ class WrappedAgent:
                     current_args = failed[-1][0].applied_args
         except InvariantAbortError:
             self.oracle.update_failure_resolution(failure.id, ResolutionStatus.ABORTED)
+            self._emit("recovery_resolved", resolution="aborted", total_attempts=len(attempts))
             raise
 
         self.oracle.update_failure_resolution(failure.id, ResolutionStatus.EXHAUSTED)
+        self._emit("recovery_resolved", resolution="exhausted", total_attempts=len(attempts))
         raise RecoveryExhaustedError(
             tool_name=self.tool_name,
             call_args=kwargs,
@@ -412,7 +488,7 @@ class WrappedAgent:
             return
 
         for arg, value in fix.argument_patch.items():
-            self.guards.promote(
+            promoted = self.guards.promote(
                 tool_name=self.tool_name,
                 argument=arg,
                 kind="patch",
@@ -420,10 +496,12 @@ class WrappedAgent:
                 source_signature=signature,
                 root_cause=fix.root_cause,
             )
+            if promoted is not None:  # None means a no-op (sticky-revoked) — not a real promotion
+                self._emit("guard_promoted", argument=arg, kind="patch")
         for arg_transform in fix.transforms:
             if arg_transform.transform not in GUARD_SAFE_TRANSFORMS:
                 continue
-            self.guards.promote(
+            promoted = self.guards.promote(
                 tool_name=self.tool_name,
                 argument=arg_transform.argument,
                 kind="transform",
@@ -431,6 +509,26 @@ class WrappedAgent:
                 source_signature=signature,
                 root_cause=fix.root_cause,
             )
+            if promoted is not None:
+                self._emit("guard_promoted", argument=arg_transform.argument, kind="transform")
+
+    def _maybe_demote_guards(self, guards: list[StandingGuard]) -> None:
+        """The reverse of `_maybe_promote_guard` (Phase 5): once a guard
+        has fired enough times and its failure rate has crossed the
+        demotion threshold, auto-revoke it via the same sticky
+        `revoke()` a human would use — a guard that's stopped working
+        shouldn't keep firing just because nothing is watching.
+        `guards` here have already had `record_application` update
+        their `times_applied`/`success_rate` in place (same objects,
+        not fresh copies), so this reads the just-recorded numbers."""
+        for guard in guards:
+            if guard.times_applied < self.guard_demotion_min_occurrences:
+                continue
+            failure_rate = 1.0 - guard.success_rate
+            if failure_rate > self.guard_demotion_max_failure_rate:
+                revoked = self.guards.revoke(guard.tool_name, guard.argument, guard.kind)
+                if revoked:
+                    self._emit("guard_revoked", argument=guard.argument, kind=guard.kind)
 
     def describe_guards(self) -> str:
         """Human/LLM-readable text describing this tool's active guards —
@@ -441,7 +539,9 @@ class WrappedAgent:
 
     # -- shared success/failure tail (Phase 3: reused by every selection path) -
 
-    def _on_attempt_success(self, signature: str, fix: Fix, failure_id: int) -> None:
+    def _on_attempt_success(
+        self, signature: str, fix: Fix, source: FixSource, failure_id: int, attempt_number: int
+    ) -> None:
         """Write the fix back as a recipe, mark the failure resolved, and
         (if enabled) check whether it's now reliable enough to promote
         into a standing guard. Called identically by the single-candidate
@@ -462,6 +562,8 @@ class WrappedAgent:
         )
         if self.enable_standing_guards:
             self._maybe_promote_guard(signature, fix, recipe)
+        self._emit("call_result", success=True, source=source, attempt_number=attempt_number)
+        self._emit("recovery_resolved", resolution="recovered", total_attempts=attempt_number)
 
     def _on_attempt_failure(
         self,
@@ -482,6 +584,10 @@ class WrappedAgent:
         )
         if source == "recipe":
             self.recipes.record_fast_path_failure(signature)
+        self._emit(
+            "call_result", success=False, source=source,
+            error_type=error_type, attempt_number=len(attempts),
+        )
 
     # -- helpers -------------------------------------------------------------
 
@@ -554,13 +660,27 @@ class WrappedAgent:
         `success_rate`/`times_applied`), or None if no recipe applies.
         Factored out of `_find_fix` so the single-candidate (Phase 1/2)
         path and the multi-candidate (Phase 3) path share one
-        implementation — no chance of the two silently diverging."""
+        implementation — no chance of the two silently diverging.
+
+        Phase 5: if `recipe_min_success_rate` is set (opt-in, None by
+        default), a recipe whose `success_rate` has fallen below it —
+        once applied at least `recipe_reliability_min_occurrences`
+        times, so one early failure can't disqualify a brand-new recipe
+        — is treated as if it didn't match at all, falling straight
+        through to reflection instead of proposing a fix that's stopped
+        working."""
         recipe = self.oracle.get_recipe(signature)
         if recipe is None:
             matches = self.oracle.find_similar_failures(signature, top_k=1)
             if matches and matches[0].score >= self.similarity_threshold:
                 recipe = self.oracle.get_recipe(matches[0].id)
         if recipe is None:
+            return None
+        if (
+            self.recipe_min_success_rate is not None
+            and recipe.times_applied >= self.recipe_reliability_min_occurrences
+            and recipe.success_rate < self.recipe_min_success_rate
+        ):
             return None
         return Fix.model_validate(recipe.fix_detail), recipe
 
@@ -759,8 +879,31 @@ def wrap(
     call_timeout: float | None = None,
     max_memory_mb: int | None = None,
     max_cpu_seconds: float | None = None,
+    guard_demotion_min_occurrences: int = 3,
+    guard_demotion_max_failure_rate: float = 0.5,
+    recipe_min_success_rate: float | None = None,
+    recipe_reliability_min_occurrences: int = 3,
+    metrics: MetricsHook | None = None,
 ) -> WrappedAgent:
     """
+    metrics: MetricsHook | None = None (Phase 5)
+        Optional observability hook — see `WrappedAgent.__init__`'s
+        docstring and `telemetry/metrics.py` for the full design.
+
+    guard_demotion_min_occurrences / guard_demotion_max_failure_rate (Phase 5)
+        Auto-revokes a guard (via the same sticky `revoke()` a human
+        would use) once it's fired at least `guard_demotion_min_occurrences`
+        times and its failure rate exceeds `guard_demotion_max_failure_rate`.
+        Always enabled — it only ever removes a demonstrably-failing
+        guard, never a working one.
+
+    recipe_min_success_rate / recipe_reliability_min_occurrences (Phase 5)
+        Opt-in (default `None` = today's unconditional behavior). When
+        set, a recipe whose `success_rate` has fallen below this floor
+        (once applied at least `recipe_reliability_min_occurrences`
+        times) is skipped as a fast-path candidate, falling through to
+        reflection instead.
+
     side_effect_free: bool = False
         Vouches that `tool_fn` has no problematic real-world effect
         regardless of which arguments it's called with, and is therefore
@@ -820,4 +963,9 @@ def wrap(
         call_timeout=call_timeout,
         max_memory_mb=max_memory_mb,
         max_cpu_seconds=max_cpu_seconds,
+        guard_demotion_min_occurrences=guard_demotion_min_occurrences,
+        guard_demotion_max_failure_rate=guard_demotion_max_failure_rate,
+        recipe_min_success_rate=recipe_min_success_rate,
+        recipe_reliability_min_occurrences=recipe_reliability_min_occurrences,
+        metrics=metrics,
     )
