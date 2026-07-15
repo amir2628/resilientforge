@@ -361,8 +361,11 @@ class SQLiteStore:
             params.append(workflow_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
+        # `where` only ever interpolates the hardcoded column/operator fragments built
+        # above (e.g. "signature = ?"); every actual value is bound via `params`, never
+        # string-interpolated.
         rows = self._conn.execute(
-            f"SELECT * FROM failures {where} ORDER BY id DESC LIMIT ?", params
+            f"SELECT * FROM failures {where} ORDER BY id DESC LIMIT ?", params  # nosec B608
         ).fetchall()
         return [FailureRecord._from_row(row) for row in rows]
 
@@ -578,8 +581,11 @@ class SQLiteStore:
             clauses.append("active = 1")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
+        # `where` only ever interpolates the hardcoded column/operator fragments built
+        # above (e.g. "tool_name = ?", "active = 1"); every actual value is bound via
+        # `params`, never string-interpolated.
         rows = self._conn.execute(
-            f"SELECT * FROM guards {where} ORDER BY tool_name, argument LIMIT ?", params
+            f"SELECT * FROM guards {where} ORDER BY tool_name, argument LIMIT ?", params  # nosec B608
         ).fetchall()
         return [GuardRow._from_row(row) for row in rows]
 

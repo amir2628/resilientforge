@@ -51,7 +51,11 @@ supposed to change across occurrences.
 from __future__ import annotations
 
 import multiprocessing
-import pickle
+
+# Only used to serialize/deserialize tool_fn across the parent process's own spawned
+# child (see docstring above); never deserializes bytes from an external or untrusted
+# source.
+import pickle  # nosec B403
 import sys
 from queue import Empty as _QueueEmpty
 from typing import Any, Callable
