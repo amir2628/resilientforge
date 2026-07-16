@@ -12,8 +12,10 @@ venv/
 htmlcov/
 .mypy_cache/
 
-.resilientforge/
+.resilientforge*/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 tests/failure_injection/reports/
 

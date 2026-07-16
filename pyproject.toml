@@ -59,6 +59,25 @@ resilientforge = "resilientforge.cli.main:app"
 Homepage = "https://github.com/amir2628/resilientforge"
 Issues = "https://github.com/amir2628/resilientforge/issues"
 
+[tool.hatch.build]
+# Defense-in-depth beyond .gitignore: the wheel target below already scopes
+# itself to src/resilientforge only, but hatchling's sdist target has no
+# such restriction by default -- absent explicit config, it falls back to
+# whatever the VCS (git) currently tracks, which makes it implicitly
+# dependent on git state rather than a real packaging guarantee (a build
+# run against a working tree where one of these got re-added/re-tracked by
+# accident would leak it again). Excluded explicitly here so it can't:
+# - examples/.resilientforge*: runtime-generated oracle databases + Chroma
+#   vector-index binaries, created by actually running examples/*_demo.py
+#   locally -- never source, never meant to ship.
+# - validation: a real-world validation harness, including a full clone of
+#   a third-party repo (langchain-ai/react-agent) plus generated oracle
+#   exports/metrics logs -- not part of the installable library.
+exclude = [
+    "examples/.resilientforge*",
+    "validation",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/resilientforge"]
 
