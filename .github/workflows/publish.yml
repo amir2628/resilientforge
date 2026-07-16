@@ -1,0 +1,58 @@
+name: Publish to PyPI
+
+# Trusted publishing (PyPI's OIDC flow) -- no API token or secret stored
+# anywhere in this repo. Triggers ONLY on a version tag push matching
+# vX.Y.Z (e.g. v0.3.0) -- never on a push or merge to main, and never on a
+# pull request. Publishing requires PyPI's "pending publisher" for this
+# project to already be registered with:
+#   PyPI project name: resilientforge
+#   Owner:             amir2628
+#   Repository:        resilientforge
+#   Workflow filename: publish.yml
+#   Environment name:  pypi
+# PyPI creates the actual project automatically the first time this
+# workflow successfully publishes -- no manual first upload needed.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # required for OIDC trusted publishing -- no secrets used
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
