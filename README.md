@@ -1,6 +1,7 @@
 # ResilientForge
 
 [![CI](https://github.com/amir2628/resilientforge/actions/workflows/ci.yml/badge.svg)](https://github.com/amir2628/resilientforge/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/resilientforge.svg)](https://pypi.org/project/resilientforge/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 ResilientForge is a small, framework-agnostic Python library that sits on top of an
@@ -17,7 +18,8 @@ promoted into a **standing guard** that fixes the arguments *before* the
 tool is even called — the failure stops recurring at all, instead of
 recurring once and then being fixed on retry.
 
-**Status:** v0.2.0, Alpha — not yet published to PyPI. Full phase-by-phase
+**Status:** v0.3.0, Alpha — published on
+[PyPI](https://pypi.org/project/resilientforge/). Full phase-by-phase
 development history is in [`CHANGELOG.md`](./CHANGELOG.md); see
 [`docs/architecture.md`](./docs/architecture.md) for how it actually works
 under the hood, and "Validation" below for how it's held up against a real
